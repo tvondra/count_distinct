@@ -1,0 +1,35 @@
+{
+   "name": "count_distinct",
+   "abstract": "Aggregate for computing number of distinct values using a hash table.",
+   "description": "The regular COUNT(DISTINCT ...) always performs a sort, which results in bad performance if there's a lot of duplicate values. This extension implements custom count_distinct aggregate function that uses a hash table to achieve the same purpose. So far there are only INT and BIGINT aggregates, but extending it to other data types should not be difficult.",
+   "version": "1.0.0",
+   "maintainer": "Tomas Vondra <tv@fuzzy.cz>",
+   "license": "bsd",
+   "prereqs": {
+      "runtime": {
+         "requires": {
+            "PostgreSQL": "8.4.0"
+         }
+      }
+   },
+   "provides": {
+     "count_distinct": {
+       "file": "sql/count_distinct--1.0.0.sql",
+       "docfile" : "README.md",
+       "version": "1.0.0"
+     }
+   },
+   "resources": {
+      "repository": {
+        "url":  "https://github.com/tvondra/count_distinct.git",
+        "web":  "http://github.com/tvondra/count_distinct",
+        "type": "git"
+      }
+   },
+   "tags" : ["count", "distinct", "aggregate"],
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "http://pgxn.org/meta/spec.txt"
+   },
+   "release_status" : "testing"
+}
