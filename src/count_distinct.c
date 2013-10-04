@@ -218,7 +218,7 @@ Datum count_distinct_append_int32(PG_FUNCTION_ARGS);
 Datum count_distinct_append_int64(PG_FUNCTION_ARGS);
 Datum count_distinct(PG_FUNCTION_ARGS);
 
-static void add_element_to_table(hash_table_t * htab, hash_element_t element);
+static bool add_element_to_table(hash_table_t * htab, hash_element_t element);
 static bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, int bucket);
 static void resize_hash_table(hash_table_t * htab);
 static hash_table_t * init_hash_table(void);
@@ -259,11 +259,12 @@ count_distinct_append_int32(PG_FUNCTION_ARGS)
     element.value = palloc(sizeof(int32));
     *((int32*)element.value) = PG_GETARG_INT32(1);
     
-    add_element_to_table(htab, element);
-    
-    /* do we need to increase the hash table size? only if we have too many elements in a bucket
-     * (on average) and the table is not too large already */
-    if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
+    /* if it was not added, free the memory, otherwise check if we need to resize the table */
+    if (! add_element_to_table(htab, element)) {
+        pfree(element.value);
+    } else if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
+        /* do we need to increase the hash table size? only if we have too many elements in a bucket
+         * (on average) and the table is not too large already */
         resize_hash_table(htab);
     }
     
@@ -309,11 +310,12 @@ count_distinct_append_int64(PG_FUNCTION_ARGS)
     element.value = palloc(sizeof(int64));
     *((int64*)element.value) = PG_GETARG_INT64(1);
     
-    add_element_to_table(htab, element);
-    
-    /* do we need to increase the hash table size? only if we have too many elements in a bucket
-     * (on average) and the table is not too large already */
-    if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
+    /* if it was not added, free the memory, otherwise check if we need to resize the table */
+    if (! add_element_to_table(htab, element)) {
+        pfree(element.value);
+    } else if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
+        /* do we need to increase the hash table size? only if we have too many elements in a bucket
+         * (on average) and the table is not too large already */
         resize_hash_table(htab);
     }
     
@@ -342,7 +344,7 @@ count_distinct(PG_FUNCTION_ARGS)
 }
 
 static
-void add_element_to_table(hash_table_t * htab, hash_element_t element) {
+bool add_element_to_table(hash_table_t * htab, hash_element_t element) {
     
     int bucket;
     
@@ -367,8 +369,12 @@ void add_element_to_table(hash_table_t * htab, hash_element_t element) {
         htab->buckets[bucket].items[htab->buckets[bucket].nitems] = element;
         htab->buckets[bucket].nitems += 1;
         htab->nitems += 1;
+        
+        return TRUE;
     
     }
+    
+    return FALSE;
 
 }
 
