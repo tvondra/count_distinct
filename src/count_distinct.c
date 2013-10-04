@@ -267,7 +267,7 @@ count_distinct_append_int32(PG_FUNCTION_ARGS)
     /* if it was not added, free the memory, otherwise check if we need to resize the table */
     if (! add_element_to_table(htab, element)) {
         pfree(element.value);
-    } else if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
+    } else if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
         /* do we need to increase the hash table size? only if we have too many elements in a bucket
          * (on average) and the table is not too large already */
         resize_hash_table(htab);
@@ -318,7 +318,7 @@ count_distinct_append_int64(PG_FUNCTION_ARGS)
     /* if it was not added, free the memory, otherwise check if we need to resize the table */
     if (! add_element_to_table(htab, element)) {
         pfree(element.value);
-    } else if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
+    } else if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
         /* do we need to increase the hash table size? only if we have too many elements in a bucket
          * (on average) and the table is not too large already */
         resize_hash_table(htab);
