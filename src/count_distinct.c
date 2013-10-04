@@ -263,7 +263,7 @@ count_distinct_append_int32(PG_FUNCTION_ARGS)
     
     /* do we need to increase the hash table size? only if we have too many elements in a bucket
      * (on average) and the table is not too large already */
-    if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets < HTAB_MAX_SIZE)) {
+    if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
         resize_hash_table(htab);
     }
     
@@ -313,7 +313,7 @@ count_distinct_append_int64(PG_FUNCTION_ARGS)
     
     /* do we need to increase the hash table size? only if we have too many elements in a bucket
      * (on average) and the table is not too large already */
-    if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets < HTAB_MAX_SIZE)) {
+    if ((htab->nitems / htab->nbuckets > HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
         resize_hash_table(htab);
     }
     
@@ -414,16 +414,16 @@ void resize_hash_table(hash_table_t * htab) {
     
     /* basic sanity checks */
     assert(htab != NULL); 
-    assert((htab->nbuckets >= HTAB_INIT_SIZE) && (htab->nbuckets*2 <= HTAB_MAX_SIZE)); /* valid number of buckets */
+    assert((htab->nbuckets >= HTAB_INIT_SIZE) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)); /* valid number of buckets */
     
     /* double the hash table size */
-    htab->nbits += 1;
+    htab->nbits += 2;
     
     htab->nitems = 0; /* we'll essentially re-add all the elements, which will set this back */
-    htab->buckets = repalloc(htab->buckets, 2 * htab->nbuckets * sizeof(hash_bucket_t));
+    htab->buckets = repalloc(htab->buckets, 4 * htab->nbuckets * sizeof(hash_bucket_t));
     
     /* but zero the new buckets, just to be sure (the size is in bytes) */
-    memset(htab->buckets + htab->nbuckets, 0, htab->nbuckets * sizeof(hash_bucket_t));
+    memset(htab->buckets + htab->nbuckets, 0, 3*htab->nbuckets * sizeof(hash_bucket_t));
     
     /* now let's loop through the old buckets and re-add all the elements */
     for (i = 0; i < htab->nbuckets; i++) {
@@ -449,6 +449,6 @@ void resize_hash_table(hash_table_t * htab) {
     }
     
     /* finally, let's update the number of buckets */
-    htab->nbuckets *= 2;
+    htab->nbuckets *= 4;
     
 }
