@@ -27,6 +27,10 @@
 PG_MODULE_MAGIC;
 #endif
 
+/* if set to 1, the table resize will be profiled */
+#define DEBUG_PROFILE       1
+#define DEBUG_HISTOGRAM     0   /* prints bucket size histogram */
+
 #if (PG_VERSION_NUM >= 90000)
 
 #define GET_AGG_CONTEXT(fname, fcinfo, aggcontext)  \
@@ -222,6 +226,7 @@ static bool add_element_to_table(hash_table_t * htab, hash_element_t element);
 static bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, uint32 bucket);
 static void resize_hash_table(hash_table_t * htab);
 static hash_table_t * init_hash_table(void);
+static void print_table_stats(hash_table_t * htab);
 
 Datum
 count_distinct_append_int32(PG_FUNCTION_ARGS)
@@ -339,6 +344,10 @@ count_distinct(PG_FUNCTION_ARGS)
     
     htab = (hash_table_t *)PG_GETARG_POINTER(0);
     
+#if DEBUG_PROFILE
+    print_table_stats(htab);
+#endif
+    
     PG_RETURN_INT64(htab->nitems);
 
 }
@@ -418,6 +427,13 @@ void resize_hash_table(hash_table_t * htab) {
     int i, j;
     hash_bucket_t old_bucket;
     
+#if DEBUG_PROFILE
+    struct timeval start_time, end_time;
+    
+    print_table_stats(htab);
+    gettimeofday(&start_time, NULL);
+#endif
+    
     /* basic sanity checks */
     assert(htab != NULL); 
     assert((htab->nbuckets >= HTAB_INIT_SIZE) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)); /* valid number of buckets */
@@ -456,5 +472,67 @@ void resize_hash_table(hash_table_t * htab) {
     
     /* finally, let's update the number of buckets */
     htab->nbuckets *= 4;
+    
+#if DEBUG_PROFILE
+
+    gettimeofday(&end_time, NULL);
+    print_table_stats(htab);
+    
+    elog(WARNING, "RESIZE: items=%d [%d => %d] duration=%ld us",
+                htab->nitems, htab->nbuckets/4, htab->nbuckets,
+                (end_time.tv_sec - start_time.tv_sec)*1000000 + (end_time.tv_usec - start_time.tv_usec));
+    
+#endif
+    
+}
+
+static 
+void print_table_stats(hash_table_t * htab) {
+    
+    int i;
+    int32 * buckets;
+    int min_items, max_items;
+    double average, variance = 0;
+    
+    min_items = htab->nitems;
+    max_items = 0;
+    
+    for (i = 0; i < htab->nbuckets; i++) {
+        min_items = (htab->buckets[i].nitems < min_items) ? htab->buckets[i].nitems : min_items;
+        max_items = (htab->buckets[i].nitems > max_items) ? htab->buckets[i].nitems : max_items;
+    }
+    
+    elog(WARNING, "===== hash table stats =====");
+    elog(WARNING, " min bucket size: %d", min_items);
+    elog(WARNING, " max bucket size: %d", max_items);
+    
+    buckets = palloc0((max_items+1)*sizeof(int32));
+    
+    /* average number of items per bucket */
+    average = (htab->nitems * 1.0) / htab->nbuckets;
+    
+    /* compute number of buckets for each bucket size in [0, max_items] */
+    for (i = 0; i < htab->nbuckets; i++) {
+        buckets[htab->buckets[i].nitems]++;
+        variance += (htab->buckets[i].nitems - average) * (htab->buckets[i].nitems - average);
+    }
+    
+    elog(WARNING, " bucket size variance: %.3f", variance/htab->nbuckets);
+    elog(WARNING, " bucket size stddev: %.3f", sqrt(variance/htab->nbuckets));
+    
+#if DEBUG_HISTOGRAM
+    
+    /* now print the histogram (if enabled) */
+    elog(WARNING, "--------- histogram ---------");
+    
+    for (i = 0; i <= max_items; i++) {
+        elog(WARNING, "[%3d] => %7.3f%% [%d]", i, (buckets[i] * 100.0) / (htab->nbuckets), buckets[i]);
+    }
+    
+#endif
+    
+    elog(WARNING, "============================");
+    
+    pfree(buckets);
     
 }
