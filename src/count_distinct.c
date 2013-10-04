@@ -28,7 +28,7 @@ PG_MODULE_MAGIC;
 #endif
 
 /* if set to 1, the table resize will be profiled */
-#define DEBUG_PROFILE       1
+#define DEBUG_PROFILE       0
 #define DEBUG_HISTOGRAM     0   /* prints bucket size histogram */
 
 #if (PG_VERSION_NUM >= 90000)
@@ -226,7 +226,10 @@ static bool add_element_to_table(hash_table_t * htab, hash_element_t element);
 static bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, uint32 bucket);
 static void resize_hash_table(hash_table_t * htab);
 static hash_table_t * init_hash_table(void);
+
+#if DEBUG_PROFILE
 static void print_table_stats(hash_table_t * htab);
+#endif
 
 Datum
 count_distinct_append_int32(PG_FUNCTION_ARGS)
@@ -486,6 +489,7 @@ void resize_hash_table(hash_table_t * htab) {
     
 }
 
+#if DEBUG_PROFILE
 static 
 void print_table_stats(hash_table_t * htab) {
     
@@ -536,3 +540,4 @@ void print_table_stats(hash_table_t * htab) {
     pfree(buckets);
     
 }
+#endif
