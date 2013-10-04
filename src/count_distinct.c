@@ -284,6 +284,10 @@ count_distinct_append_int32(PG_FUNCTION_ARGS)
         
         /* now let's loop through the old buckets and re-add all the elements */
         for (i = 0; i < htab->nbuckets; i++) {
+
+            if (htab->buckets[i].items == NULL) {
+                continue;
+            }
             
             /* keep the old values */
             old_bucket = htab->buckets[i];
@@ -381,6 +385,10 @@ count_distinct_append_int64(PG_FUNCTION_ARGS)
         
         /* now let's loop through the old buckets and re-add all the elements */
         for (i = 0; i < htab->nbuckets; i++) {
+
+            if (htab->buckets[i].items == NULL) {
+                continue;
+            }
             
             /* keep the old values */
             old_bucket = htab->buckets[i];
