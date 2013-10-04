@@ -414,7 +414,7 @@ void resize_hash_table(hash_table_t * htab) {
     
     /* basic sanity checks */
     assert(htab != NULL); 
-    assert((htab->nbuckets >= HTAB_INIT_SIZE) && (htab->nbuckets*2 < HTAB_MAX_SIZE)); /* valid number of buckets */
+    assert((htab->nbuckets >= HTAB_INIT_SIZE) && (htab->nbuckets*2 <= HTAB_MAX_SIZE)); /* valid number of buckets */
     
     /* double the hash table size */
     htab->nbits += 1;
