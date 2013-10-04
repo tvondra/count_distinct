@@ -166,9 +166,9 @@ PG_MODULE_MAGIC;
 
 /* hash table parameters */
 #define HTAB_INIT_BITS      2      /* initial number of significant bits */
-#define HTAB_INIT_SIZE      4      /* initial hash table size is 256 buckets */
+#define HTAB_INIT_SIZE      4      /* initial hash table size is only 4 buckets (80 items) */
 #define HTAB_MAX_SIZE       262144 /* maximal hash table size is 256k buckets */
-#define HTAB_BUCKET_LIMIT   20      /* when to resize the table (average bucket size limit) */
+#define HTAB_BUCKET_LIMIT   20     /* when to resize the table (average bucket size limit) */
 
 #define HTAB_BUCKET_STEP    5       /* bucket growth step (number of elements, not bytes) */
 
