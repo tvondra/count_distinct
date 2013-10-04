@@ -182,8 +182,8 @@ PG_MODULE_MAGIC;
  */
 typedef struct hash_element_t {
     
-    int32   hash;   /* 32-bit hash of this particular element */
-    int32   length; /* length of the value (depends on the actual data type) */
+    uint32  hash;   /* 32-bit hash of this particular element */
+    uint32  length; /* length of the value (depends on the actual data type) */
     char   *value;  /* the value itself */
     
 } hash_element_t;
@@ -193,7 +193,7 @@ typedef struct hash_element_t {
  */
 typedef struct hash_bucket_t {
     
-    int32   nitems; /* items in this particular bucket */
+    uint32  nitems; /* items in this particular bucket */
     hash_element_t * items;   /* array of ITEMS */
     
 } hash_bucket_t;
@@ -201,9 +201,9 @@ typedef struct hash_bucket_t {
 /* A hash table - a collection of buckets. */
 typedef struct hash_table_t {
     
-    int32   nbits;      /* number of significant bits of the hash (8 by default) */
-    int32   nbuckets;   /* number of buckets (HTAB_INIT_SIZE), basically 2^nbits */
-    int32   nitems;     /* current number of elements of the hash table */
+    uint16  nbits;      /* number of significant bits of the hash (HTAB_INIT_BITS by default) */
+    uint32  nbuckets;   /* number of buckets (HTAB_INIT_SIZE), basically 2^nbits */
+    uint32  nitems;     /* current number of elements of the hash table */
     
     hash_bucket_t *  buckets;
     
@@ -219,7 +219,7 @@ Datum count_distinct_append_int64(PG_FUNCTION_ARGS);
 Datum count_distinct(PG_FUNCTION_ARGS);
 
 static bool add_element_to_table(hash_table_t * htab, hash_element_t element);
-static bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, int bucket);
+static bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, uint32 bucket);
 static void resize_hash_table(hash_table_t * htab);
 static hash_table_t * init_hash_table(void);
 
@@ -346,7 +346,7 @@ count_distinct(PG_FUNCTION_ARGS)
 static
 bool add_element_to_table(hash_table_t * htab, hash_element_t element) {
     
-    int bucket;
+    uint32 bucket;
     
     /* compute the hash and keep only the first 4 bytes */
     COMPUTE_CRC32(element);
@@ -379,7 +379,7 @@ bool add_element_to_table(hash_table_t * htab, hash_element_t element) {
 }
 
 static
-bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, int bucket) {
+bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, uint32 bucket) {
     
     int i;
     
