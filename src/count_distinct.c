@@ -507,6 +507,8 @@ void print_table_stats(hash_table_t * htab) {
     }
     
     elog(WARNING, "===== hash table stats =====");
+    elog(WARNING, " items: %d", htab->nitems);
+    elog(WARNING, " buckets: %d", htab->nbuckets);
     elog(WARNING, " min bucket size: %d", min_items);
     elog(WARNING, " max bucket size: %d", max_items);
     
