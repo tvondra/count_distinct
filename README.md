@@ -56,6 +56,40 @@ This aggregate function takes ~4.1 seconds and produces exactly the same
 results (but unsorted).
 
 
+Issues
+------
+The current implementation works only with 32-bit and 64-bit integers, but
+it should be farly straightforward to extend this to other data types. For
+large values there are possible optimizations minimizing required amount
+of memory by keeping a suitable hash (e.g. SHA-3 os similar).
+
+Which leads to the much more serious issue (and also much more difficult to
+fix) - memory consumption. The primary factor determining this is the number
+of distinct values - say you want to process 80M unique 32-bit integer values.
+The hash item requires ~20B per item, so it's ~1.6GB just for the values.
+With some additional overhead for structures and preallocated items, it
+might use ~2GB.
+
+However when experimenting with this data set, I consistently see more than
+5GB of RAM allocated for the aggregation. That is a lot, and the overhead is
+much higher than the estimate. It might be a bug in this extension, it might
+be a bug in HashAggregate or it might be a feature. Or maybe I'm missing
+something important. The main message is that that the memory consumption
+is not negligible. I'm working on this.
+
+A related issue is that this aggregate is unable to handle "too much memory"
+situations efficiently (e.g. by spilling to disk). First, it would contradict
+the goal to make it much faster, second, there extension has no idea of how
+much memory is used - the extension deals with per-group hash tables, the
+global view is available only to HashAggregate.
+
+So in short - if you're dealing with a lot of distinct values, you need
+a lot of RAM in the machine.
+
+BTW if you're memory constrained and/or distinct estimate is enough for
+you, check extension: this https://github.com/tvondra/distinct_estimators
+
+
 Installation
 ------------
 Installing this is very simple, especially if you're using pgxn client.
