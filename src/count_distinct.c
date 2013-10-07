@@ -229,6 +229,8 @@ typedef struct hash_table_t {
 #define HASH_ELEMENT_SIZE(htab)     (htab->length + offsetof(hash_element_t, value))
 #define GET_ELEMENT(htab, bucket, item) \
     (hash_element_t*) ((char*) htab->buckets[bucket].items + (item * HASH_ELEMENT_SIZE(htab)))
+#define GET_BUCKET_ELEMENT(htab, bucket, item) \
+    (hash_element_t*) ((char*) bucket.items + (item * HASH_ELEMENT_SIZE(htab)))
 
 /* prototypes */
 PG_FUNCTION_INFO_V1(count_distinct_append_int32);
@@ -491,7 +493,8 @@ void resize_hash_table(hash_table_t * htab) {
         htab->buckets[i].items  = NULL;
         
         for (j = 0; j < old_bucket.nitems; j++) {
-            add_element_to_table(htab, (char*)&old_bucket.items[j].value);
+            hash_element_t * element = GET_BUCKET_ELEMENT(htab, old_bucket, j);
+            add_element_to_table(htab, element->value);
         }
         
         /* and finally release the old bucket */
