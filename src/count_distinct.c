@@ -163,10 +163,10 @@ PG_MODULE_MAGIC;
     
 #endif
 
-#define COMPUTE_CRC32(element) \
-    INIT_CRC32(element.hash); \
-    COMP_CRC32(element.hash, element.value, element.length); \
-    FIN_CRC32(element.hash);
+#define COMPUTE_CRC32(hash, value, length) \
+    INIT_CRC32(hash); \
+    COMP_CRC32(hash, value, length); \
+    FIN_CRC32(hash);
 
 /* hash table parameters */
 #define HTAB_INIT_BITS      2      /* initial number of significant bits */
@@ -181,14 +181,26 @@ PG_MODULE_MAGIC;
 /* A single value in the hash table, along with it's 32-bit hash (so that we
  * don't need to compute it over and over).
  * 
+ * The value is stored inline - for example to store int32 (4B) value, the palloc
+ * would look like this
+ * 
+ *     palloc(offsetof(hash_element_t, value) + sizeof(int32))
+ * 
+ * and similarly for other data types. The important thing is that the structure
+ * needs to be fixed length so that buckets can contain an array of items. So for
+ * varlena types, there needs to be a pointer (either 4B or 8B) with value stored
+ * somewhere else.
+ * 
+ * See HASH_ELEMENT_SIZE/GET_ELEMENT for evaluation of the element size and
+ * accessing a particular item in a bucket.
+ * 
  * TODO Is it really efficient to keep the hash, or should we save a bit of memory
  * and recompute the hash every time?
  */
 typedef struct hash_element_t {
     
-    uint32  hash;   /* 32-bit hash of this particular element */
-    uint32  length; /* length of the value (depends on the actual data type) */
-    char   *value;  /* the value itself */
+    uint32  hash;      /* 32-bit hash of this particular element */
+    char    value[1];  /* the value itself (trick: fixed-length will be in-place) */
     
 } hash_element_t;
 
@@ -198,13 +210,14 @@ typedef struct hash_element_t {
 typedef struct hash_bucket_t {
     
     uint32  nitems; /* items in this particular bucket */
-    hash_element_t * items;   /* array of ITEMS */
+    hash_element_t * items;   /* array of bucket elements (see GET_ELEMENT) */
     
 } hash_bucket_t;
 
 /* A hash table - a collection of buckets. */
 typedef struct hash_table_t {
     
+    uint16  length;     /* length of the value (depends on the actual data type) */
     uint16  nbits;      /* number of significant bits of the hash (HTAB_INIT_BITS by default) */
     uint32  nbuckets;   /* number of buckets (HTAB_INIT_SIZE), basically 2^nbits */
     uint32  nitems;     /* current number of elements of the hash table */
@@ -212,6 +225,10 @@ typedef struct hash_table_t {
     hash_bucket_t *  buckets;
     
 } hash_table_t;
+
+#define HASH_ELEMENT_SIZE(htab)     (htab->length + offsetof(hash_element_t, value))
+#define GET_ELEMENT(htab, bucket, item) \
+    (hash_element_t*) ((char*) htab->buckets[bucket].items + (item * HASH_ELEMENT_SIZE(htab)))
 
 /* prototypes */
 PG_FUNCTION_INFO_V1(count_distinct_append_int32);
@@ -222,10 +239,10 @@ Datum count_distinct_append_int32(PG_FUNCTION_ARGS);
 Datum count_distinct_append_int64(PG_FUNCTION_ARGS);
 Datum count_distinct(PG_FUNCTION_ARGS);
 
-static bool add_element_to_table(hash_table_t * htab, hash_element_t element);
-static bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, uint32 bucket);
+static bool add_element_to_table(hash_table_t * htab, char * value);
+static bool element_exists_in_bucket(hash_table_t * htab, uint32 hash, char * value, uint32 bucket);
 static void resize_hash_table(hash_table_t * htab);
-static hash_table_t * init_hash_table(void);
+static hash_table_t * init_hash_table(int length);
 
 #if DEBUG_PROFILE
 static void print_table_stats(hash_table_t * htab);
@@ -235,8 +252,8 @@ Datum
 count_distinct_append_int32(PG_FUNCTION_ARGS)
 {
     
-    hash_table_t * htab;
-    hash_element_t element;
+    int32          value;
+    hash_table_t  *htab;
     
     MemoryContext oldcontext;
     MemoryContext aggcontext;
@@ -255,7 +272,7 @@ count_distinct_append_int32(PG_FUNCTION_ARGS)
     oldcontext = MemoryContextSwitchTo(aggcontext);
         
     if (PG_ARGISNULL(0)) {
-        htab = init_hash_table();
+        htab = init_hash_table(sizeof(int32));
     } else {
         htab = (hash_table_t *)PG_GETARG_POINTER(0);
     }
@@ -263,14 +280,12 @@ count_distinct_append_int32(PG_FUNCTION_ARGS)
     /* we can be sure the value is not null (see the check above) */
     
     /* prepare the element structure (hash + value) */
-    element.length = sizeof(int32);
-    element.value = palloc(sizeof(int32));
-    *((int32*)element.value) = PG_GETARG_INT32(1);
+    value = PG_GETARG_INT32(1);
     
-    /* if it was not added, free the memory, otherwise check if we need to resize the table */
-    if (! add_element_to_table(htab, element)) {
-        pfree(element.value);
-    } else if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
+    /* add the value into the hash table, check if we need to resize the table */
+    add_element_to_table(htab, (char*)&value);
+    
+    if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
         /* do we need to increase the hash table size? only if we have too many elements in a bucket
          * (on average) and the table is not too large already */
         resize_hash_table(htab);
@@ -285,9 +300,9 @@ count_distinct_append_int32(PG_FUNCTION_ARGS)
 Datum
 count_distinct_append_int64(PG_FUNCTION_ARGS)
 {
-    
-    hash_table_t * htab;
-    hash_element_t element;
+
+    int64          value;
+    hash_table_t  *htab;
     
     MemoryContext oldcontext;
     MemoryContext aggcontext;
@@ -306,7 +321,7 @@ count_distinct_append_int64(PG_FUNCTION_ARGS)
     oldcontext = MemoryContextSwitchTo(aggcontext);
         
     if (PG_ARGISNULL(0)) {
-        htab = init_hash_table();
+        htab = init_hash_table(sizeof(int64));
     } else {
         htab = (hash_table_t *)PG_GETARG_POINTER(0);
     }
@@ -314,14 +329,12 @@ count_distinct_append_int64(PG_FUNCTION_ARGS)
     /* we can be sure the value is not null (see the check above) */
     
     /* prepare the element structure (hash + value) */
-    element.length = sizeof(int64);
-    element.value = palloc(sizeof(int64));
-    *((int64*)element.value) = PG_GETARG_INT64(1);
+    value = PG_GETARG_INT64(1);
     
-    /* if it was not added, free the memory, otherwise check if we need to resize the table */
-    if (! add_element_to_table(htab, element)) {
-        pfree(element.value);
-    } else if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
+    /* add the value into the hash table, check if we need to resize the table */
+    add_element_to_table(htab, (char*)&value);
+    
+    if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
         /* do we need to increase the hash table size? only if we have too many elements in a bucket
          * (on average) and the table is not too large already */
         resize_hash_table(htab);
@@ -346,7 +359,7 @@ count_distinct(PG_FUNCTION_ARGS)
     }
     
     htab = (hash_table_t *)PG_GETARG_POINTER(0);
-    
+
 #if DEBUG_PROFILE
     print_table_stats(htab);
 #endif
@@ -356,29 +369,36 @@ count_distinct(PG_FUNCTION_ARGS)
 }
 
 static
-bool add_element_to_table(hash_table_t * htab, hash_element_t element) {
+bool add_element_to_table(hash_table_t * htab, char * value) {
     
+    uint32 hash;
     uint32 bucket;
+
+    hash_element_t * element;
     
     /* compute the hash and keep only the first 4 bytes */
-    COMPUTE_CRC32(element);
+    COMPUTE_CRC32(hash, value, htab->length);
 
     /* get the bucket and then add the element to the bucket */
-    bucket = ((1 << htab->nbits) - 1) & element.hash;
+    bucket = ((1 << htab->nbits) - 1) & hash;
     
     /* not it's not, so let's add it to the hash table */
-    if (! element_exists_in_bucket(htab, element, bucket)) {
+    if (! element_exists_in_bucket(htab, hash, value, bucket)) {
     
         /* if there's no space in the bucket, resize it */
         if (htab->buckets[bucket].nitems == 0) {
-            htab->buckets[bucket].items = palloc(HTAB_BUCKET_STEP * sizeof(hash_element_t));
+            htab->buckets[bucket].items = palloc(HTAB_BUCKET_STEP * HASH_ELEMENT_SIZE(htab));
         } else if (htab->buckets[bucket].nitems % HTAB_BUCKET_STEP == 0) {
             htab->buckets[bucket].items = repalloc(htab->buckets[bucket].items,
-                                                (htab->buckets[bucket].nitems + HTAB_BUCKET_STEP) * sizeof(hash_element_t));
+                                                (htab->buckets[bucket].nitems + HTAB_BUCKET_STEP) * HASH_ELEMENT_SIZE(htab));
         }
         
-        /* increase the element into the bucket */
-        htab->buckets[bucket].items[htab->buckets[bucket].nitems] = element;
+        /* get the element position right (needs to handle dynamic value lengths) */
+        element = GET_ELEMENT(htab, bucket, htab->buckets[bucket].nitems);
+        
+        element->hash = hash;
+        memcpy(&element->value, value, htab->length);
+        
         htab->buckets[bucket].nitems += 1;
         htab->nitems += 1;
         
@@ -391,14 +411,19 @@ bool add_element_to_table(hash_table_t * htab, hash_element_t element) {
 }
 
 static
-bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, uint32 bucket) {
+bool element_exists_in_bucket(hash_table_t * htab, uint32 hash, char * value, uint32 bucket) {
     
     int i;
+    hash_element_t * element;
     
     /* is the element already in the bucket? */
     for (i = 0; i < htab->buckets[bucket].nitems; i++) {
-        if (htab->buckets[bucket].items[i].hash == element.hash) {
-            if (memcmp(htab->buckets[bucket].items[i].value, element.value, element.length) == 0) {
+
+        /* get the element position right (needs to handle dynamic value lengths) */
+        element = GET_ELEMENT(htab, bucket, i);
+
+        if (element->hash == hash) {
+            if (memcmp(element->value, value, htab->length) == 0) {
                 return TRUE;
             }
         }
@@ -409,10 +434,11 @@ bool element_exists_in_bucket(hash_table_t * htab, hash_element_t element, uint3
 }
 
 static
-hash_table_t * init_hash_table() {
+hash_table_t * init_hash_table(int length) {
     
     hash_table_t * htab = (hash_table_t *)palloc(sizeof(hash_table_t));
     
+    htab->length = length;
     htab->nbits = HTAB_INIT_BITS;
     htab->nbuckets = HTAB_INIT_SIZE;
     htab->nitems = 0;
@@ -465,7 +491,7 @@ void resize_hash_table(hash_table_t * htab) {
         htab->buckets[i].items  = NULL;
         
         for (j = 0; j < old_bucket.nitems; j++) {
-            add_element_to_table(htab, old_bucket.items[j]);
+            add_element_to_table(htab, (char*)&old_bucket.items[j].value);
         }
         
         /* and finally release the old bucket */
