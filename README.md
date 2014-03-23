@@ -5,14 +5,15 @@ which for large amounts of data often ends in sorting and bad performance.
 
 Functions
 ---------
-There are two aggregate functions - for INT and BIGINT respectively.
+There's a single polymorphic aggregate function, handling all fixed length
+data types passed by value (i.e. up to 8B values on 64-bit machines):
 
-* count_distinct(p_value int)
-* count_distinct(p_value bigint)
+* count_distinct(p_value anyelement)
 
-Extending the same approach to other data types should be rather
-straight-forward (but it's important to be very careful about memory
-consumption, as the hash-based approach keeps everything in RAM).
+Extending the same approach to other data types (varlena or passed by
+reference) should be rather straight-forward and I'll do that eventually.
+But it's important to be very careful about memory consumption, as the
+hash-based approach keeps everything in RAM).
 
 
 Performance
@@ -58,10 +59,11 @@ results (but unsorted).
 
 Issues
 ------
-The current implementation works only with 32-bit and 64-bit integers, but
-it should be farly straightforward to extend this to other data types. For
-large values there are possible optimizations minimizing required amount
-of memory by keeping a suitable hash (e.g. SHA-3 os similar).
+The current implementation works only with fixed-length values passed by
+value (i.e. limited by the pointer size), but it should be rather simple
+to extend this to other data types. For large values there are possible
+optimizations minimizing required amount of memory by keeping a suitable
+hash (e.g. SHA-3 os similar) instead of the value.
 
 Which leads to the much more serious issue (and also much more difficult to
 fix) - memory consumption. The primary factor determining this is the number

@@ -233,12 +233,10 @@ typedef struct hash_table_t {
     (hash_element_t*) ((char*) bucket.items + (item * HASH_ELEMENT_SIZE(htab)))
 
 /* prototypes */
-PG_FUNCTION_INFO_V1(count_distinct_append_int32);
-PG_FUNCTION_INFO_V1(count_distinct_append_int64);
+PG_FUNCTION_INFO_V1(count_distinct_append);
 PG_FUNCTION_INFO_V1(count_distinct);
 
-Datum count_distinct_append_int32(PG_FUNCTION_ARGS);
-Datum count_distinct_append_int64(PG_FUNCTION_ARGS);
+Datum count_distinct_append(PG_FUNCTION_ARGS);
 Datum count_distinct(PG_FUNCTION_ARGS);
 
 static bool add_element_to_table(hash_table_t * htab, char * value);
@@ -251,90 +249,58 @@ static void print_table_stats(hash_table_t * htab);
 #endif
 
 Datum
-count_distinct_append_int32(PG_FUNCTION_ARGS)
+count_distinct_append(PG_FUNCTION_ARGS)
 {
-    
-    int32          value;
+
     hash_table_t  *htab;
-    
+
+    /* info for anyelement */
+    Oid         element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    Datum       element = PG_GETARG_DATUM(1);
+    int16       typlen;
+    bool        typbyval;
+    char        typalign;
+
+    /* memory contexts */
     MemoryContext oldcontext;
     MemoryContext aggcontext;
-    
+
     /* OK, we do want to skip NULL values altogether */
     if (PG_ARGISNULL(1)) {
         if (PG_ARGISNULL(0))
-            PG_RETURN_NULL();
+            PG_RETURN_NULL();   /* no state, no value -> just keep NULL */
         else
             /* if there already is a state accumulated, don't forget it */
             PG_RETURN_DATUM(PG_GETARG_DATUM(0));
     }
 
-    GET_AGG_CONTEXT("count_distinct_append_int32", fcinfo, aggcontext);
+    /* we can be sure the value is not null (see the check above) */
+
+    /* get type information for the second parameter (anyelement item) */
+    get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
+
+    /* we can't handle varlena types yet or values passed by reference */
+    if ((typlen == -1) || (! typbyval))
+        elog(ERROR, "count_distinct handles only fixed-length types passed by value");
+
+    /* switch to the per-group hash-table memory context */
+    GET_AGG_CONTEXT("count_distinct_append", fcinfo, aggcontext);
 
     oldcontext = MemoryContextSwitchTo(aggcontext);
-        
+
+    /* init the hash table, if needed */
     if (PG_ARGISNULL(0)) {
-        htab = init_hash_table(sizeof(int32));
+        htab = init_hash_table(typlen);
     } else {
         htab = (hash_table_t *)PG_GETARG_POINTER(0);
     }
-    
-    /* we can be sure the value is not null (see the check above) */
-    
-    /* prepare the element structure (hash + value) */
-    value = PG_GETARG_INT32(1);
-    
+
+    /* TODO The requests for type info shouldn't be a problem (thanks to lsyscache),
+     * but if it turns out to have a noticeable impact it's possible to cache that
+     * between the calls (in the estimator). */
+
     /* add the value into the hash table, check if we need to resize the table */
-    add_element_to_table(htab, (char*)&value);
-    
-    if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
-        /* do we need to increase the hash table size? only if we have too many elements in a bucket
-         * (on average) and the table is not too large already */
-        resize_hash_table(htab);
-    }
-    
-    MemoryContextSwitchTo(oldcontext);
-    
-    PG_RETURN_POINTER(htab);
-
-}
-
-Datum
-count_distinct_append_int64(PG_FUNCTION_ARGS)
-{
-
-    int64          value;
-    hash_table_t  *htab;
-    
-    MemoryContext oldcontext;
-    MemoryContext aggcontext;
-    
-    /* OK, we do want to skip NULL values altogether */
-    if (PG_ARGISNULL(1)) {
-        if (PG_ARGISNULL(0))
-            PG_RETURN_NULL();
-        else
-            /* if there already is a state accumulated, don't forget it */
-            PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-    }
-
-    GET_AGG_CONTEXT("count_distinct_append_int64", fcinfo, aggcontext);
-
-    oldcontext = MemoryContextSwitchTo(aggcontext);
-        
-    if (PG_ARGISNULL(0)) {
-        htab = init_hash_table(sizeof(int64));
-    } else {
-        htab = (hash_table_t *)PG_GETARG_POINTER(0);
-    }
-    
-    /* we can be sure the value is not null (see the check above) */
-    
-    /* prepare the element structure (hash + value) */
-    value = PG_GETARG_INT64(1);
-    
-    /* add the value into the hash table, check if we need to resize the table */
-    add_element_to_table(htab, (char*)&value);
+    add_element_to_table(htab, (char*)&element);
     
     if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
         /* do we need to increase the hash table size? only if we have too many elements in a bucket
