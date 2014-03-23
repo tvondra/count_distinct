@@ -1,7 +1,7 @@
 COUNT_DISTINCT aggregate
 ========================
 This extension provides a hash-based alternative to COUNT(DISTINCT ...)
-which usually ends in sorting and bad performance.
+which for large amounts of data often ends in sorting and bad performance.
 
 Functions
 ---------
@@ -79,9 +79,9 @@ is not negligible. I'm working on this.
 
 A related issue is that this aggregate is unable to handle "too much memory"
 situations efficiently (e.g. by spilling to disk). First, it would contradict
-the goal to make it much faster, second, there extension has no idea of how
-much memory is used - the extension deals with per-group hash tables, the
-global view is available only to HashAggregate.
+the goal to make it much faster, second, the extension has no idea of how
+much memory is used for the whole hash table - the extension deals with
+per-group hash tables, the global view is available only to HashAggregate.
 
 So in short - if you're dealing with a lot of distinct values, you need
 a lot of RAM in the machine.
