@@ -168,69 +168,83 @@ PG_MODULE_MAGIC;
     COMP_CRC32(hash, value, length); \
     FIN_CRC32(hash);
 
-/* hash table parameters */
-#define HTAB_INIT_BITS      2      /* initial number of significant bits */
-#define HTAB_INIT_SIZE      4      /* initial hash table size is only 4 buckets (80 items) */
-#define HTAB_MAX_SIZE       262144 /* maximal hash table size is 256k buckets */
-#define HTAB_BUCKET_LIMIT   20     /* when to resize the table (average bucket size limit) */
-
-#define HTAB_BUCKET_STEP    5       /* bucket growth step (number of elements, not bytes) */
-
-/* Structures used to keep the data - bucket and hash table. */
-
-/* A single value in the hash table, along with it's 32-bit hash (so that we
- * don't need to compute it over and over).
+/* This count_distinct implementation uses a simple, partially sorted array.
  * 
- * The value is stored inline - for example to store int32 (4B) value, the palloc
- * would look like this
+ * It's considerably simpler than the hash-table based version, and the main
+ * goals of this design is to:
  * 
- *     palloc(offsetof(hash_element_t, value) + sizeof(int32))
+ * (a) minimize the palloc overhead - the whole array is allocated as a whole,
+ *     and thus has a single palloc header (while in the hash table, each
+ *     bucket had at least one such header)
  * 
- * and similarly for other data types. The important thing is that the structure
- * needs to be fixed length so that buckets can contain an array of items. So for
- * varlena types, there needs to be a pointer (either 4B or 8B) with value stored
- * somewhere else.
+ * (b) optimal L2/L3 cache utilization - once the hash table can't fit into
+ *     the CPU caches, it get's considerably slower because of cache misses,
+ *     and it's impossible to improve the hash implementation (because for
+ *     large hash tables it naturally leads to cache misses)
  * 
- * See HASH_ELEMENT_SIZE/GET_ELEMENT for evaluation of the element size and
- * accessing a particular item in a bucket.
+ * Hash tables are great when you need to immediately query the structure
+ * (e.g. to immediately check whether the key is already in the table), but
+ * in count_distint it's not really necessary. We can accumulate some elements
+ * first (into a buffer), and then process all of them at once - this approach
+ * improves the CPU cache hit ratios. Also, the palloc overhead is much lower.
  * 
- * TODO Is it really efficient to keep the hash, or should we save a bit of memory
- * and recompute the hash every time?
+ * The data array is split into three sections - sorted items, unsorted items,
+ * and unused.
+ * 
+ *     ----------------------------------------------
+ *     |    sorted    |    unsorted    |    free    |
+ *     ----------------------------------------------
+ * 
+ * Initially, the sorted / unsorted sections are empty, of course.
+ * 
+ *     ----------------------------------------------
+ *     |                    free                    |
+ *     ----------------------------------------------
+ *
+ * New values are simply accumulated into the unsorted section, which grows.
+ * 
+ *     ----------------------------------------------
+ *     |          unsorted  -->       |     free    |
+ *     ----------------------------------------------
+ * 
+ * Once there's no more space for new items, the unsorted items are 'compacted'
+ * which means the values are sorted, duplicates are removed and the result
+ * is merged into the sorted section (unless it's empty). The 'merge' is just
+ * a simple 'merge-sort' of the two sorted inputs, with removal of duplicates.
+ *
+ * Once the compaction completes, it's checked whether enough space was freed,
+ * where 'enough' means ~20% of the array needs to be free. Using low values
+ * (e.g. space for at least one value) might cause 'oscillation' - imagine
+ * compaction that removes a single item, causing compaction on the very next
+ * addition. Using non-trivial threshold (like the 20%) should prevent such
+ * frequent compactions - which is quite expensive operation.
+ * 
+ * If there's not enough free space, the array grows (twice the size).
+ * 
+ * The compaction needs to be performed at the very end, when computing the
+ * actual result of the aggregate (distinct value in the array).
+ * 
  */
-typedef struct hash_element_t {
-    
-    uint32  hash;      /* 32-bit hash of this particular element */
-    char    value[1];  /* the value itself (trick: fixed-length will be in-place) */
-    
-} hash_element_t;
 
-/* A single bucket of the hash table - basically a simple list of items implemented
- * as an array (+length). This grows in steps (HTAB_BUCKET_STEP).
- */
-typedef struct hash_bucket_t {
-    
-    uint32  nitems; /* items in this particular bucket */
-    hash_element_t * items;   /* array of bucket elements (see GET_ELEMENT) */
-    
-} hash_bucket_t;
+#define ARRAY_INIT_SIZE     32      /* initial size of the array (in bytes) */
+#define ARRAY_FREE_FRACT    0.2     /* we want >= 20% free space after compaction */
 
 /* A hash table - a collection of buckets. */
-typedef struct hash_table_t {
-    
-    uint16  length;     /* length of the value (depends on the actual data type) */
-    uint16  nbits;      /* number of significant bits of the hash (HTAB_INIT_BITS by default) */
-    uint32  nbuckets;   /* number of buckets (HTAB_INIT_SIZE), basically 2^nbits */
-    uint32  nitems;     /* current number of elements of the hash table */
-    
-    hash_bucket_t *  buckets;
-    
-} hash_table_t;
+typedef struct element_set_t {
 
-#define HASH_ELEMENT_SIZE(htab)     (htab->length + offsetof(hash_element_t, value))
-#define GET_ELEMENT(htab, bucket, item) \
-    (hash_element_t*) ((char*) htab->buckets[bucket].items + (item * HASH_ELEMENT_SIZE(htab)))
-#define GET_BUCKET_ELEMENT(htab, bucket, item) \
-    (hash_element_t*) ((char*) bucket.items + (item * HASH_ELEMENT_SIZE(htab)))
+    uint32  item_size;  /* length of the value (depends on the actual data type) */
+    uint32  nsorted;    /* number of items in the sorted part (distinct) */
+    uint32  nall;       /* number of all items (unsorted part may contain duplicates) */
+    uint32  nbytes;     /* number of bytes in the data array */
+
+    /* aggregation memory context (reference, so we don't need to do lookups repeatedly) */
+    MemoryContext aggctx;
+
+    /* elements */
+    char *  data;       /* nsorted items first, then (nall - nsorted) unsorted items */
+
+} element_set_t;
+
 
 /* prototypes */
 PG_FUNCTION_INFO_V1(count_distinct_append);
@@ -239,27 +253,24 @@ PG_FUNCTION_INFO_V1(count_distinct);
 Datum count_distinct_append(PG_FUNCTION_ARGS);
 Datum count_distinct(PG_FUNCTION_ARGS);
 
-static bool add_element_to_table(hash_table_t * htab, char * value);
-static bool element_exists_in_bucket(hash_table_t * htab, uint32 hash, char * value, uint32 bucket);
-static void resize_hash_table(hash_table_t * htab);
-static hash_table_t * init_hash_table(int length);
+static void add_element(element_set_t * eset, char * value);
+static element_set_t * init_set(int item_size, MemoryContext ctx);
+static int compare_items(const void * a, const void * b, void * size);
+static void compact_set(element_set_t * eset);
 
 #if DEBUG_PROFILE
-static void print_table_stats(hash_table_t * htab);
+static void print_set_stats(element_set_t * eset);
 #endif
 
 Datum
 count_distinct_append(PG_FUNCTION_ARGS)
 {
 
-    hash_table_t  *htab;
+    element_set_t  *eset;
 
     /* info for anyelement */
     Oid         element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
     Datum       element = PG_GETARG_DATUM(1);
-    int16       typlen;
-    bool        typbyval;
-    char        typalign;
 
     /* memory contexts */
     MemoryContext oldcontext;
@@ -276,13 +287,6 @@ count_distinct_append(PG_FUNCTION_ARGS)
 
     /* we can be sure the value is not null (see the check above) */
 
-    /* get type information for the second parameter (anyelement item) */
-    get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
-
-    /* we can't handle varlena types yet or values passed by reference */
-    if ((typlen == -1) || (! typbyval))
-        elog(ERROR, "count_distinct handles only fixed-length types passed by value");
-
     /* switch to the per-group hash-table memory context */
     GET_AGG_CONTEXT("count_distinct_append", fcinfo, aggcontext);
 
@@ -290,251 +294,230 @@ count_distinct_append(PG_FUNCTION_ARGS)
 
     /* init the hash table, if needed */
     if (PG_ARGISNULL(0)) {
-        htab = init_hash_table(typlen);
+
+        int16       typlen;
+        bool        typbyval;
+        char        typalign;
+
+        /* get type information for the second parameter (anyelement item) */
+        get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
+
+        /* we can't handle varlena types yet or values passed by reference */
+        if ((typlen == -1) || (! typbyval))
+            elog(ERROR, "count_distinct handles only fixed-length types passed by value");
+
+        eset = init_set(typlen, aggcontext);
+
     } else {
-        htab = (hash_table_t *)PG_GETARG_POINTER(0);
+        eset = (element_set_t *)PG_GETARG_POINTER(0);
     }
 
-    /* TODO The requests for type info shouldn't be a problem (thanks to lsyscache),
-     * but if it turns out to have a noticeable impact it's possible to cache that
-     * between the calls (in the estimator). */
+    /* add the value into the set */
+    add_element(eset, (char*)&element);
 
-    /* add the value into the hash table, check if we need to resize the table */
-    add_element_to_table(htab, (char*)&element);
-    
-    if ((htab->nitems / htab->nbuckets >= HTAB_BUCKET_LIMIT) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)) {
-        /* do we need to increase the hash table size? only if we have too many elements in a bucket
-         * (on average) and the table is not too large already */
-        resize_hash_table(htab);
-    }
-    
     MemoryContextSwitchTo(oldcontext);
     
-    PG_RETURN_POINTER(htab);
+    PG_RETURN_POINTER(eset);
 
 }
 
 Datum
 count_distinct(PG_FUNCTION_ARGS)
 {
-    
-    hash_table_t * htab;
-    
+
+    element_set_t * eset;
+
     CHECK_AGG_CONTEXT("count_distinct", fcinfo);
-    
+
     if (PG_ARGISNULL(0)) {
         PG_RETURN_NULL();
     }
-    
-    htab = (hash_table_t *)PG_GETARG_POINTER(0);
+
+    eset = (element_set_t *)PG_GETARG_POINTER(0);
+
+    /* do the compaction */
+    compact_set(eset);
 
 #if DEBUG_PROFILE
-    print_table_stats(htab);
+    print_set_stats(eset);
 #endif
     
-    PG_RETURN_INT64(htab->nitems);
+    PG_RETURN_INT64(eset->nall);
 
 }
 
+/* performs compaction of the set
+ *
+ * Sorts the unsorted data, removes duplicate values and then merges it
+ * into the already sorted part (skipping duplicate values).
+ * 
+ * Finally, it checks whether at least ARRAY_FREE_FRACT (20%) of the array
+ * is empty, and if not then resizes it.
+ */
 static
-bool add_element_to_table(hash_table_t * htab, char * value) {
-    
-    uint32 hash;
-    uint32 bucket;
+void compact_set(element_set_t * eset) {
 
-    hash_element_t * element;
-    
-    /* compute the hash and keep only the first 4 bytes */
-    COMPUTE_CRC32(hash, value, htab->length);
+        /* TODO replace with insert-sort for small number of items (for <64 items it should be faster than qsort) */
 
-    /* get the bucket and then add the element to the bucket */
-    bucket = ((1 << htab->nbits) - 1) & hash;
-    
-    /* not it's not, so let's add it to the hash table */
-    if (! element_exists_in_bucket(htab, hash, value, bucket)) {
-    
-        /* if there's no space in the bucket, resize it */
-        if (htab->buckets[bucket].nitems == 0) {
-            htab->buckets[bucket].items = palloc(HTAB_BUCKET_STEP * HASH_ELEMENT_SIZE(htab));
-        } else if (htab->buckets[bucket].nitems % HTAB_BUCKET_STEP == 0) {
-            htab->buckets[bucket].items = repalloc(htab->buckets[bucket].items,
-                                                (htab->buckets[bucket].nitems + HTAB_BUCKET_STEP) * HASH_ELEMENT_SIZE(htab));
-        }
-        
-        /* get the element position right (needs to handle dynamic value lengths) */
-        element = GET_ELEMENT(htab, bucket, htab->buckets[bucket].nitems);
-        
-        element->hash = hash;
-        memcpy(&element->value, value, htab->length);
-        
-        htab->buckets[bucket].nitems += 1;
-        htab->nitems += 1;
-        
-        return TRUE;
-    
-    }
-    
-    return FALSE;
+        /* sort the new items */
+        qsort_r(eset->data + eset->nsorted * eset->item_size,
+                eset->nall - eset->nsorted, eset->item_size,
+                compare_items, &eset->item_size);
 
-}
+        /* remove duplicities from the sorted array */
+        {
+            char   *base = eset->data + (eset->nsorted * eset->item_size);
+            char   *last = base;
+            char   *curr;
+            int     i;
+            int     cnt = 1;
 
-static
-bool element_exists_in_bucket(hash_table_t * htab, uint32 hash, char * value, uint32 bucket) {
-    
-    int i;
-    hash_element_t * element;
-    
-    /* is the element already in the bucket? */
-    for (i = 0; i < htab->buckets[bucket].nitems; i++) {
+            for (i = 1; i < eset->nall - eset->nsorted; i++) {
 
-        /* get the element position right (needs to handle dynamic value lengths) */
-        element = GET_ELEMENT(htab, bucket, i);
+                curr = base + (i * eset->item_size);
 
-        if (element->hash == hash) {
-            if (memcmp(element->value, value, htab->length) == 0) {
-                return TRUE;
+                /* items differ (keep the item) */
+                if (memcmp(last, curr, eset->item_size) != 0) {
+
+                    last += eset->item_size;
+                    cnt  += 1;
+
+                    /* only copy if really needed */
+                    if (last != curr)
+                        memcpy(last, curr, eset->item_size);
+
+                }
+
             }
+
+            /* duplicities removed -> update the number of items in this part */
+            eset->nall = eset->nsorted + cnt;
+
+            // elog(WARNING, "distinct = %d", eset->nall - eset->nsorted);
+
         }
-    }
-    
-    return FALSE;
-    
+
+        /* if this is the first sorted part, we're done - otherwise do a merge-sort */
+        if (eset->nsorted == 0) {
+            eset->nsorted = eset->nall;
+        } else {
+            
+            MemoryContext oldctx = MemoryContextSwitchTo(eset->aggctx);
+
+            /* allocate new array for the result */
+            char * data = palloc0(eset->nbytes);
+            char * ptr = data;
+
+            /* already sorted array */
+            char * a = eset->data;
+            char * a_max = eset->data + eset->nsorted * eset->item_size;
+
+            /* the new array */
+            char * b = eset->data + (eset->nsorted * eset->item_size);
+            char * b_max = eset->data + eset->nall * eset->item_size;
+
+            MemoryContextSwitchTo(oldctx);
+
+            while (true) {
+                
+                int r = memcmp(a, b, eset->item_size);
+
+                /* if both values are the same, copy one of them into the result and increment both */
+                if (r == 0) {
+                    memcpy(ptr, a, eset->item_size);
+                    a += eset->item_size;
+                    b += eset->item_size;
+                } else if (r < 0) {
+                    memcpy(ptr, a, eset->item_size);
+                    a += eset->item_size;
+                } else {
+                    memcpy(ptr, b, eset->item_size);
+                    b += eset->item_size;
+                }
+
+                ptr += eset->item_size;
+
+                /* is this the end of (at least) one of the arrays? */
+                if ((a == a_max) || (b == b_max)) {
+
+                    if (a != a_max) {
+                        /* b ended -> copy rest of a */
+                        memcpy(ptr, a, a_max - a);
+                        ptr += (a_max - a);
+                    } else if (b != b_max) {
+                        /* a ended -> copy rest of b */
+                        memcpy(ptr, b, b_max - b);
+                        ptr += (b_max - b);
+                    }
+
+                    break;
+
+                }
+
+            }
+
+            /* update the counts */
+            eset->nsorted = (ptr - data) / eset->item_size;
+            eset->nall = eset->nsorted;
+            pfree(eset->data);
+            eset->data = data;
+
+        }
+
+        /* still not sufficient - there's not ARRAY_FREE_FRACT of free space */
+        if ((eset->nbytes - eset->nall * eset->item_size) * 1.0 / eset->nbytes < ARRAY_FREE_FRACT) {
+            eset->nbytes *= 2;
+            eset->data = repalloc(eset->data, eset->nbytes);
+        }
+
 }
 
 static
-hash_table_t * init_hash_table(int length) {
-    
-    hash_table_t * htab = (hash_table_t *)palloc(sizeof(hash_table_t));
-    
-    htab->length = length;
-    htab->nbits = HTAB_INIT_BITS;
-    htab->nbuckets = HTAB_INIT_SIZE;
-    htab->nitems = 0;
-        
+void add_element(element_set_t * eset, char * value) {
+
+    /* if there's not enough space for another item, perform compaction */
+    if (eset->item_size * (eset->nall + 1) > eset->nbytes)
+        compact_set(eset);
+
+    /* there needs to be space for at least one more value (thanks to the compaction) */
+    Assert(eset->nbytes >= eset->item_size * (eset->nall + 1));
+
+    /* now we're sure there's enough space */
+    memcpy(eset->data + (eset->item_size * eset->nall), value, eset->item_size);
+    eset->nall += 1;
+
+}
+
+/* XXX make sure the whole method is called within the aggregate context */
+static
+element_set_t * init_set(int item_size, MemoryContext ctx) {
+
+    element_set_t * eset = (element_set_t *)palloc0(sizeof(element_set_t));
+
+    eset->item_size = item_size;
+    eset->nsorted = 0;
+    eset->nall = 0;
+    eset->nbytes = ARRAY_INIT_SIZE;
+    eset->aggctx = ctx;
+
     /* the memory is zeroed */
-    htab->buckets = (hash_bucket_t *)palloc0(sizeof(hash_bucket_t) * HTAB_INIT_SIZE);
-    
-    return htab;
-    
-}
+    eset->data = palloc0(eset->nbytes);
 
-static
-void resize_hash_table(hash_table_t * htab) {
-    
-    int i, j;
-    hash_bucket_t old_bucket;
-    
-#if DEBUG_PROFILE
-    struct timeval start_time, end_time;
-    
-    print_table_stats(htab);
-    gettimeofday(&start_time, NULL);
-#endif
-    
-    /* basic sanity checks */
-    assert(htab != NULL); 
-    assert((htab->nbuckets >= HTAB_INIT_SIZE) && (htab->nbuckets*4 <= HTAB_MAX_SIZE)); /* valid number of buckets */
-    
-    /* double the hash table size */
-    htab->nbits += 2;
-    
-    htab->nitems = 0; /* we'll essentially re-add all the elements, which will set this back */
-    htab->buckets = repalloc(htab->buckets, 4 * htab->nbuckets * sizeof(hash_bucket_t));
-    
-    /* but zero the new buckets, just to be sure (the size is in bytes) */
-    memset(htab->buckets + htab->nbuckets, 0, 3*htab->nbuckets * sizeof(hash_bucket_t));
-    
-    /* now let's loop through the old buckets and re-add all the elements */
-    for (i = 0; i < htab->nbuckets; i++) {
+    return eset;
 
-        if (htab->buckets[i].items == NULL) {
-            continue;
-        }
-        
-        /* keep the old values */
-        old_bucket = htab->buckets[i];
-        
-        /* reset the bucket */
-        htab->buckets[i].nitems = 0;
-        htab->buckets[i].items  = NULL;
-        
-        for (j = 0; j < old_bucket.nitems; j++) {
-            hash_element_t * element = GET_BUCKET_ELEMENT(htab, old_bucket, j);
-            add_element_to_table(htab, element->value);
-        }
-        
-        /* and finally release the old bucket */
-        pfree(old_bucket.items);
-        
-    }
-    
-    /* finally, let's update the number of buckets */
-    htab->nbuckets *= 4;
-    
-#if DEBUG_PROFILE
-
-    gettimeofday(&end_time, NULL);
-    print_table_stats(htab);
-    
-    elog(WARNING, "RESIZE: items=%d [%d => %d] duration=%ld us",
-                htab->nitems, htab->nbuckets/4, htab->nbuckets,
-                (end_time.tv_sec - start_time.tv_sec)*1000000 + (end_time.tv_usec - start_time.tv_usec));
-    
-#endif
-    
 }
 
 #if DEBUG_PROFILE
 static 
-void print_table_stats(hash_table_t * htab) {
-    
-    int i;
-    int32 * buckets;
-    int min_items, max_items;
-    double average, variance = 0;
-    
-    min_items = htab->nitems;
-    max_items = 0;
-    
-    for (i = 0; i < htab->nbuckets; i++) {
-        min_items = (htab->buckets[i].nitems < min_items) ? htab->buckets[i].nitems : min_items;
-        max_items = (htab->buckets[i].nitems > max_items) ? htab->buckets[i].nitems : max_items;
-    }
-    
-    elog(WARNING, "===== hash table stats =====");
-    elog(WARNING, " items: %d", htab->nitems);
-    elog(WARNING, " buckets: %d", htab->nbuckets);
-    elog(WARNING, " min bucket size: %d", min_items);
-    elog(WARNING, " max bucket size: %d", max_items);
-    
-    buckets = palloc0((max_items+1)*sizeof(int32));
-    
-    /* average number of items per bucket */
-    average = (htab->nitems * 1.0) / htab->nbuckets;
-    
-    /* compute number of buckets for each bucket size in [0, max_items] */
-    for (i = 0; i < htab->nbuckets; i++) {
-        buckets[htab->buckets[i].nitems]++;
-        variance += (htab->buckets[i].nitems - average) * (htab->buckets[i].nitems - average);
-    }
-    
-    elog(WARNING, " bucket size variance: %.3f", variance/htab->nbuckets);
-    elog(WARNING, " bucket size stddev: %.3f", sqrt(variance/htab->nbuckets));
-    
-#if DEBUG_HISTOGRAM
-    
-    /* now print the histogram (if enabled) */
-    elog(WARNING, "--------- histogram ---------");
-    
-    for (i = 0; i <= max_items; i++) {
-        elog(WARNING, "[%3d] => %7.3f%% [%d]", i, (buckets[i] * 100.0) / (htab->nbuckets), buckets[i]);
-    }
-    
-#endif
-    
-    elog(WARNING, "============================");
-    
-    pfree(buckets);
-    
+void print_set_stats(element_set_t * eset) {
+
+    elog(WARNING, "bytes=%d item=%d all=%d sorted=%d", eset->nbytes, eset->item_size, eset->nall, eset->nsorted);
+
 }
 #endif
+
+/* just compare the data directly */
+static
+int compare_items(const void * a, const void * b, void * size) {
+    return memcmp(a, b, *(int*)size);
+}
