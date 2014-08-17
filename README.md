@@ -61,35 +61,40 @@ Issues
 ------
 The current implementation works only with fixed-length values passed by
 value (i.e. limited by the pointer size), but it should be rather simple
-to extend this to other data types. For large values there are possible
-optimizations minimizing required amount of memory by keeping a suitable
-hash (e.g. SHA-3 os similar) instead of the value.
+to extend this to other data types. One way to overcome this limitation
+is hashing the value into a 32/64-bit integers, and then passing these
+hash values to count_distinct (see https://github.com/tvondra/pghashlib
+for a good library of hash functions). However be careful as this
+effectively turns `count_distinct` into an estimator.
 
-Which leads to the much more serious issue (and also much more difficult to
-fix) - memory consumption. The primary factor determining this is the number
-of distinct values - say you want to process 80M unique 32-bit integer values.
-The hash item requires ~20B per item, so it's ~1.6GB just for the values.
-With some additional overhead for structures and preallocated items, it
-might use ~2GB.
+If an estimator is sufficient for you, maybe
+[postgresql-hll](https://github.com/aggregateknowledge/postgresql-hll)
+or one of the estimators at [distinct_estimators](https://github.com/tvondra/distinct_estimators)
+would be a better solution for you?
 
-However when experimenting with this data set, I consistently see more than
-5GB of RAM allocated for the aggregation. That is a lot, and the overhead is
-much higher than the estimate. It might be a bug in this extension, it might
-be a bug in HashAggregate or it might be a feature. Or maybe I'm missing
-something important. The main message is that that the memory consumption
-is not negligible. I'm working on this.
 
-A related issue is that this aggregate is unable to handle "too much memory"
-situations efficiently (e.g. by spilling to disk). First, it would contradict
-the goal to make it much faster, second, the extension has no idea of how
-much memory is used for the whole hash table - the extension deals with
-per-group hash tables, the global view is available only to HashAggregate.
+With the previous implementation (based on hash tables), memory consumption
+was a big problem. For example when counting 80M unique 32-bit integers,
+it was common to see more than 5GB of RAM allocated (which is way more than
+the 320MB necessary for the values, and ~1.6GB when including some hash
+table related overhead (buckets, pointers, ...). This was mostly due to
+clashing with MemoryContext internals, etc.
+
+With the new implementation significantly improves this, and the memory
+consumption is a fraction (usually less than 10-20% of what it used to be).
+
+
+Still, it may happen that you run out of memory. It's not very likely
+because for large number of groups planner will switch to GroupAggregate
+(effectively keeping a single group in memory), but it's possible.
+
+Sadly, that is not something the extension could handle internally in
+a reasonable way. The only actual solution is to implement this into
+HashAggregate itself (some people are working on this, but don't hold
+your breath - it won't happen before 9.5).
 
 So in short - if you're dealing with a lot of distinct values, you need
 a lot of RAM in the machine.
-
-BTW if you're memory constrained and/or distinct estimate is enough for
-you, check extension: this https://github.com/tvondra/distinct_estimators
 
 
 Installation
