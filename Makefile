@@ -2,7 +2,7 @@ MODULE_big = count_distinct
 OBJS = src/count_distinct.o
 
 EXTENSION = count_distinct
-DATA = sql/count_distinct--1.2.0.sql
+DATA = sql/count_distinct--1.2.1.sql
 MODULES = count_distinct
 
 CFLAGS=`pg_config --includedir-server`
