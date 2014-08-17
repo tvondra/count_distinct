@@ -31,5 +31,5 @@
       "version": "1.0.0",
       "url": "http://pgxn.org/meta/spec.txt"
    },
-   "release_status" : "testing"
+   "release_status" : "stable"
 }
