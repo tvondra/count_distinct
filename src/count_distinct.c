@@ -358,6 +358,10 @@ static
 void compact_set(element_set_t * eset) {
 
         /* TODO replace with insert-sort for small number of items (for <64 items it should be faster than qsort) */
+        Assert(eset->nsorted + eset->nall > 0);
+        Assert(eset->data != NULL);
+        Assert(eset->nsorted <= eset->nall);
+        Assert(eset->nall <= eset->nbytes / eset->item_size);
 
         /* sort the new items */
         qsort_r(eset->data + eset->nsorted * eset->item_size,
