@@ -363,6 +363,10 @@ void compact_set(element_set_t * eset) {
         Assert(eset->nsorted <= eset->nall);
         Assert(eset->nall <= eset->nbytes / eset->item_size);
 
+        /* if there are no new (unsorted items), we're done */
+        if (eset->nall == eset->nsorted)
+            return;
+
         /* sort the new items */
         qsort_r(eset->data + eset->nsorted * eset->item_size,
                 eset->nall - eset->nsorted, eset->item_size,
