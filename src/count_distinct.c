@@ -256,7 +256,7 @@ Datum count_distinct(PG_FUNCTION_ARGS);
 static void add_element(element_set_t * eset, char * value);
 static element_set_t * init_set(int item_size, MemoryContext ctx);
 static int compare_items(const void * a, const void * b, void * size);
-static void compact_set(element_set_t * eset);
+static void compact_set(element_set_t * eset, bool need_space);
 
 #if DEBUG_PROFILE
 static void print_set_stats(element_set_t * eset);
@@ -336,7 +336,7 @@ count_distinct(PG_FUNCTION_ARGS)
     eset = (element_set_t *)PG_GETARG_POINTER(0);
 
     /* do the compaction */
-    compact_set(eset);
+    compact_set(eset, false);
 
 #if DEBUG_PROFILE
     print_set_stats(eset);
@@ -355,7 +355,7 @@ count_distinct(PG_FUNCTION_ARGS)
  * is empty, and if not then resizes it.
  */
 static
-void compact_set(element_set_t * eset) {
+void compact_set(element_set_t * eset, bool need_space) {
 
         /* TODO replace with insert-sort for small number of items (for <64 items it should be faster than qsort) */
         Assert(eset->nsorted + eset->nall > 0);
@@ -472,8 +472,13 @@ void compact_set(element_set_t * eset) {
 
         }
 
-        /* still not sufficient - there's not ARRAY_FREE_FRACT of free space */
-        if ((eset->nbytes - eset->nall * eset->item_size) * 1.0 / eset->nbytes < ARRAY_FREE_FRACT) {
+        /*
+         * When we need space for more items (e.g. not when finalizing the aggregate
+         * result) we need to check that, and enlarge the array when needed. We
+         * require ARRAY_FREE_FRACT of the space to be free.
+         */
+        if (need_space &&
+            ((eset->nbytes - eset->nall * eset->item_size) * 1.0 / eset->nbytes < ARRAY_FREE_FRACT)) {
             eset->nbytes *= 2;
             eset->data = repalloc(eset->data, eset->nbytes);
         }
@@ -485,7 +490,7 @@ void add_element(element_set_t * eset, char * value) {
 
     /* if there's not enough space for another item, perform compaction */
     if (eset->item_size * (eset->nall + 1) > eset->nbytes)
-        compact_set(eset);
+        compact_set(eset, true);
 
     /* there needs to be space for at least one more value (thanks to the compaction) */
     Assert(eset->nbytes >= eset->item_size * (eset->nall + 1));
