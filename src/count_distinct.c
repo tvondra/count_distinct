@@ -368,9 +368,9 @@ void compact_set(element_set_t * eset, bool need_space) {
             return;
 
         /* sort the new items */
-        qsort_r(eset->data + eset->nsorted * eset->item_size,
-                eset->nall - eset->nsorted, eset->item_size,
-                compare_items, &eset->item_size);
+        qsort_arg(eset->data + eset->nsorted * eset->item_size,
+                  eset->nall - eset->nsorted, eset->item_size,
+                  compare_items, &eset->item_size);
 
         /* remove duplicities from the sorted array */
         {
