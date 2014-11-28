@@ -2,7 +2,7 @@
    "name": "count_distinct",
    "abstract": "Aggregate for computing number of distinct values using a hash table.",
    "description": "The regular COUNT(DISTINCT ...) always performs a sort, which results in bad performance if there's a lot of duplicate values. This extension implements custom count_distinct aggregate function that uses a hash table to achieve the same purpose. So far there are only INT and BIGINT aggregates, but extending it to other data types should not be difficult.",
-   "version": "1.2.1",
+   "version": "1.3.0",
    "maintainer": "Tomas Vondra <tv@fuzzy.cz>",
    "license": "bsd",
    "prereqs": {
@@ -14,9 +14,9 @@
    },
    "provides": {
      "count_distinct": {
-       "file": "sql/count_distinct--1.2.1.sql",
+       "file": "sql/count_distinct--1.3.0.sql",
        "docfile" : "README.md",
-       "version": "1.2.1"
+       "version": "1.3.0"
      }
    },
    "resources": {
