@@ -1,6 +1,9 @@
+\set ECHO 0
 BEGIN;
 
-CREATE EXTENSION count_distinct;
+\i sql/count_distinct--1.3.0.sql
+
+\set ECHO all
 
 -- int
 SELECT count_distinct(x::int) FROM generate_series(1,1000) s(x);
