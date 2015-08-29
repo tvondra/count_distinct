@@ -1,4 +1,4 @@
-\set ECHO 0
+\set ECHO none
 -- int
 SELECT count_distinct(x::int) FROM generate_series(1,1000) s(x);
  count_distinct 
