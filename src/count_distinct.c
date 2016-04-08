@@ -249,6 +249,7 @@ typedef struct element_set_t {
 /* prototypes */
 PG_FUNCTION_INFO_V1(count_distinct_append);
 PG_FUNCTION_INFO_V1(count_distinct);
+PG_FUNCTION_INFO_V1(array_agg_distinct);
 
 Datum count_distinct_append(PG_FUNCTION_ARGS);
 Datum count_distinct(PG_FUNCTION_ARGS);
@@ -314,6 +315,50 @@ count_distinct_append(PG_FUNCTION_ARGS)
     MemoryContextSwitchTo(oldcontext);
 
     PG_RETURN_POINTER(eset);
+}
+
+Datum
+array_agg_distinct(PG_FUNCTION_ARGS)
+{
+    element_set_t * eset;
+    Datum * array_of_datums;
+    int i;
+
+    /* type information for the dummy second parameter (anyelement item) */
+    Oid         element_type;
+    int16       typlen;
+    bool        typbyval;
+    char        typalign;
+
+    CHECK_AGG_CONTEXT("count_distinct", fcinfo);
+
+    if (PG_ARGISNULL(0))
+        PG_RETURN_NULL();
+
+    eset = (element_set_t *)PG_GETARG_POINTER(0);
+
+    /* do the compaction */
+    compact_set(eset, false);
+
+#if DEBUG_PROFILE
+    print_set_stats(eset);
+#endif
+    
+    /* get type information for the dummy second parameter (anyelement item) */
+    element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
+
+    /* Copy data from compact array to array of Datums
+     * A bit suboptimal way, spends excessive memory
+     */
+    array_of_datums = palloc0(eset->nsorted * sizeof(Datum));
+    for (i = 0; i < eset->nsorted; i++)
+        memcpy(array_of_datums + i, eset->data + (eset->item_size * i), eset->item_size);
+        
+    /* build and return the array */
+    PG_RETURN_DATUM(PointerGetDatum(construct_array(
+        array_of_datums, eset->nsorted, element_type, typlen, typbyval, typalign
+    )));
 }
 
 Datum
