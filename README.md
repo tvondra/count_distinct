@@ -1,14 +1,18 @@
 COUNT_DISTINCT aggregate
 ========================
-This extension provides a hash-based alternative to COUNT(DISTINCT ...)
-which for large amounts of data often ends in sorting and bad performance.
+This extension provides a hashAgg-compatible alternative to 
+COUNT(DISTINCT ...) and ARRAY_AGG(DISTINCT ...)
+which for large amounts of data often end in sorting and bad performance.
 
 Functions
 ---------
-There's a single polymorphic aggregate function, handling all fixed length
-data types passed by value (i.e. up to 8B values on 64-bit machines):
+There are three polymorphic aggregate functions, handling all fixed length
+data types passed by value (i.e. up to 8B values on 64-bit machines) 
+or arrays of such types:
 
-* count_distinct(p_value anyelement)
+* count_distinct(anyelement)
+* array_agg_distinct(anynonarray)
+* array_agg_distinct(anyarray)
 
 Extending the same approach to other data types (varlena or passed by
 reference) should be rather straight-forward and I'll do that eventually.
@@ -109,11 +113,6 @@ and you're done. You may also install the extension manually:
 
     $ make install
     $ psql dbname -c "CREATE EXTENSION count_distinct"
-
-And if you're on an older version (pre-9.1), you have to run the SQL
-script manually
-
-    $ psql dbname < `pg_config --sharedir`/contrib/count_distinct--1.3.1.sql
 
 That's all.
 

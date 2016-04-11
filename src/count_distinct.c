@@ -1,8 +1,8 @@
 /*
-* count_distinct.c - alternative to COUNT(DISTINCT ...)
-* Copyright (C) Tomas Vondra, 2013
-*
-*/
+ * count_distinct.c - alternative to COUNT(DISTINCT ...) and ARRAY_AGG(DISTINCT ...)
+ * Copyright (C) Tomas Vondra, 2013
+ *
+ */
 
 #include <assert.h>
 #include <stdio.h>
@@ -23,15 +23,10 @@
 #include "access/tupmacs.h"
 #include "utils/pg_crc.h"
 
-#ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
-#endif
 
 /* if set to 1, the table resize will be profiled */
 #define DEBUG_PROFILE       0
-#define DEBUG_HISTOGRAM     0   /* prints bucket size histogram */
-
-#if (PG_VERSION_NUM >= 90000)
 
 #define GET_AGG_CONTEXT(fname, fcinfo, aggcontext)  \
     if (! AggCheckCallContext(fcinfo, &aggcontext)) {   \
@@ -42,131 +37,6 @@ PG_MODULE_MAGIC;
     if (! AggCheckCallContext(fcinfo, NULL)) {   \
         elog(ERROR, "%s called in non-aggregate context", fname);  \
     }
-
-#elif (PG_VERSION_NUM >= 80400)
-
-#define GET_AGG_CONTEXT(fname, fcinfo, aggcontext)  \
-    if (fcinfo->context && IsA(fcinfo->context, AggState)) {  \
-        aggcontext = ((AggState *) fcinfo->context)->aggcontext;  \
-    } else if (fcinfo->context && IsA(fcinfo->context, WindowAggState)) {  \
-        aggcontext = ((WindowAggState *) fcinfo->context)->wincontext;  \
-    } else {  \
-        elog(ERROR, "%s called in non-aggregate context", fname);  \
-        aggcontext = NULL;  \
-    }
-
-#define CHECK_AGG_CONTEXT(fname, fcinfo)  \
-    if (!(fcinfo->context &&  \
-        (IsA(fcinfo->context, AggState) ||  \
-        IsA(fcinfo->context, WindowAggState))))  \
-    {  \
-        elog(ERROR, "%s called in non-aggregate context", fname);  \
-    }
-
-#else
-
-#define GET_AGG_CONTEXT(fname, fcinfo, aggcontext)  \
-    if (fcinfo->context && IsA(fcinfo->context, AggState)) {  \
-        aggcontext = ((AggState *) fcinfo->context)->aggcontext;  \
-    } else {  \
-        elog(ERROR, "%s called in non-aggregate context", fname);  \
-        aggcontext = NULL;  \
-    }
-
-#define CHECK_AGG_CONTEXT(fname, fcinfo)  \
-    if (!(fcinfo->context &&  \
-        (IsA(fcinfo->context, AggState))))  \
-    {  \
-        elog(ERROR, "%s called in non-aggregate context", fname);  \
-    }
-
-/* backward compatibility with 8.3 (macros copied mostly from src/include/access/tupmacs.h) */
-
-#if SIZEOF_DATUM == 8
-
-#define fetch_att(T,attbyval,attlen) \
-( \
-    (attbyval) ? \
-    ( \
-        (attlen) == (int) sizeof(Datum) ? \
-            *((Datum *)(T)) \
-        : \
-      ( \
-        (attlen) == (int) sizeof(int32) ? \
-            Int32GetDatum(*((int32 *)(T))) \
-        : \
-        ( \
-            (attlen) == (int) sizeof(int16) ? \
-                Int16GetDatum(*((int16 *)(T))) \
-            : \
-            ( \
-                AssertMacro((attlen) == 1), \
-                CharGetDatum(*((char *)(T))) \
-            ) \
-        ) \
-      ) \
-    ) \
-    : \
-    PointerGetDatum((char *) (T)) \
-)
-#else                           /* SIZEOF_DATUM != 8 */
-
-#define fetch_att(T,attbyval,attlen) \
-( \
-    (attbyval) ? \
-    ( \
-        (attlen) == (int) sizeof(int32) ? \
-            Int32GetDatum(*((int32 *)(T))) \
-        : \
-        ( \
-            (attlen) == (int) sizeof(int16) ? \
-                Int16GetDatum(*((int16 *)(T))) \
-            : \
-            ( \
-                AssertMacro((attlen) == 1), \
-                CharGetDatum(*((char *)(T))) \
-            ) \
-        ) \
-    ) \
-    : \
-    PointerGetDatum((char *) (T)) \
-)
-#endif   /* SIZEOF_DATUM == 8 */
-
-#define att_addlength_pointer(cur_offset, attlen, attptr) \
-( \
-    ((attlen) > 0) ? \
-    ( \
-        (cur_offset) + (attlen) \
-    ) \
-    : (((attlen) == -1) ? \
-    ( \
-        (cur_offset) + VARSIZE_ANY(attptr) \
-    ) \
-    : \
-    ( \
-        AssertMacro((attlen) == -2), \
-        (cur_offset) + (strlen((char *) (attptr)) + 1) \
-    )) \
-)
-
-#define att_align_nominal(cur_offset, attalign) \
-( \
-    ((attalign) == 'i') ? INTALIGN(cur_offset) : \
-     (((attalign) == 'c') ? (long) (cur_offset) : \
-      (((attalign) == 'd') ? DOUBLEALIGN(cur_offset) : \
-       ( \
-            AssertMacro((attalign) == 's'), \
-            SHORTALIGN(cur_offset) \
-       ))) \
-)
-
-#endif
-
-#define COMPUTE_CRC32(hash, value, length) \
-    INIT_CRC32(hash); \
-    COMP_CRC32(hash, value, length); \
-    FIN_CRC32(hash);
 
 /* This count_distinct implementation uses a simple, partially sorted array.
  *
@@ -232,16 +102,18 @@ PG_MODULE_MAGIC;
 /* A hash table - a collection of buckets. */
 typedef struct element_set_t {
 
-    uint32  item_size;  /* length of the value (depends on the actual data type) */
-    uint32  nsorted;    /* number of items in the sorted part (distinct) */
-    uint32  nall;       /* number of all items (unsorted part may contain duplicates) */
-    uint32  nbytes;     /* number of bytes in the data array */
+    uint32  item_size;      /* length of the value (depends on the actual data type) */
+    uint32  nsorted;        /* number of items in the sorted part (distinct) */
+    uint32  nall;           /* number of all items (unsorted part may contain duplicates) */
+    uint32  nbytes;         /* number of bytes in the data array */
+    bool    input_is_array; /* flag if input type is array */
+    char    typalign;       /* alignment type, used only if input is array */
 
     /* aggregation memory context (reference, so we don't need to do lookups repeatedly) */
     MemoryContext aggctx;
 
     /* elements */
-    char *  data;       /* nsorted items first, then (nall - nsorted) unsorted items */
+    char *  data;           /* nsorted items first, then (nall - nsorted) unsorted items */
 
 } element_set_t;
 
@@ -251,11 +123,8 @@ PG_FUNCTION_INFO_V1(count_distinct_append);
 PG_FUNCTION_INFO_V1(count_distinct);
 PG_FUNCTION_INFO_V1(array_agg_distinct);
 
-Datum count_distinct_append(PG_FUNCTION_ARGS);
-Datum count_distinct(PG_FUNCTION_ARGS);
-
 static void add_element(element_set_t * eset, char * value);
-static element_set_t *init_set(int item_size, MemoryContext ctx);
+static element_set_t *init_set(bool input_is_array, int typalign, int item_size, MemoryContext ctx);
 static int compare_items(const void * a, const void * b, void * size);
 static void compact_set(element_set_t * eset, bool need_space);
 
@@ -269,8 +138,7 @@ count_distinct_append(PG_FUNCTION_ARGS)
     element_set_t  *eset;
 
     /* info for anyelement */
-    Oid         element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-    Datum       element = PG_GETARG_DATUM(1);
+    Oid         input_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
     /* memory contexts */
     MemoryContext oldcontext;
@@ -296,21 +164,71 @@ count_distinct_append(PG_FUNCTION_ARGS)
         int16       typlen;
         bool        typbyval;
         char        typalign;
-
+        Oid         element_type;
+        bool        input_is_array;
+        
+        /* check if input type is array */
+        element_type = get_element_type(input_type);
+        input_is_array = OidIsValid(element_type);
+        if (!input_is_array)
+            element_type = input_type;
+        
         /* get type information for the second parameter (anyelement item) */
         get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
 
         /* we can't handle varlena types yet or values passed by reference */
         if ((typlen == -1) || (! typbyval))
-            elog(ERROR, "count_distinct handles only fixed-length types passed by value");
-
-        eset = init_set(typlen, aggcontext);
-
+            elog(ERROR, "count_distinct handles only fixed-length types passed by value or arrays of such types");
+            
+        eset = init_set(input_is_array, typalign, typlen, aggcontext);
     } else
         eset = (element_set_t *)PG_GETARG_POINTER(0);
 
-    /* add the value into the set */
-    add_element(eset, (char*)&element);
+    if (eset->input_is_array) /* input is array */
+    {
+        ArrayType *   input = PG_GETARG_ARRAYTYPE_P(1);
+        int           ndims = ARR_NDIM(input);
+        int       *    dims = ARR_DIMS(input);
+        int          nitems = ArrayGetNItems(ndims, dims);
+        bits8     *  bitmap = ARR_NULLBITMAP(input);
+        int         bitmask = 1;
+        char      * arr_ptr = ARR_DATA_PTR(input);
+        int               i;
+
+        for (i = 0; i < nitems; i++)
+        {
+            Datum   itemvalue;
+
+            /* Ignore NULLs */
+            if (bitmap && (*bitmap & bitmask) == 0)
+                continue;
+
+            itemvalue = fetch_att(arr_ptr, true, eset->item_size);
+            
+            add_element(eset, (char*)&itemvalue);
+            
+            /* advance array pointer */
+            arr_ptr = att_addlength_pointer(arr_ptr, eset->item_size, arr_ptr);
+            arr_ptr = (char *) att_align_nominal(arr_ptr, eset->typalign);
+
+            /* advance bitmap pointer if any */
+            if (bitmap)
+            {
+                bitmask <<= 1;
+                if (bitmask == 0x100)
+                {
+                    bitmap++;
+                    bitmask = 1;
+                }
+            }
+        }
+    }
+    else /*input is non-array*/
+    {
+        Datum input = PG_GETARG_DATUM(1);
+        /* add the value into the set */
+        add_element(eset, (char*)&input);
+    }
 
     MemoryContextSwitchTo(oldcontext);
 
@@ -325,7 +243,8 @@ array_agg_distinct(PG_FUNCTION_ARGS)
     int i;
 
     /* type information for the dummy second parameter (anyelement item) */
-    Oid         element_type;
+    Oid         input_type,
+                element_type;
     int16       typlen;
     bool        typbyval;
     char        typalign;
@@ -344,8 +263,12 @@ array_agg_distinct(PG_FUNCTION_ARGS)
     print_set_stats(eset);
 #endif
     
-    /* get type information for the dummy second parameter (anyelement item) */
-    element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    /* get type information for the dummy second parameter (anyarray/anynonarray item) */
+    input_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    element_type = get_element_type(input_type);
+    if (!OidIsValid(element_type))
+        element_type = input_type;
+    //elog(WARNING, "etype=%d", element_type);
     get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
 
     /* Copy data from compact array to array of Datums
@@ -574,7 +497,7 @@ add_element(element_set_t * eset, char * value)
 
 /* XXX make sure the whole method is called within the aggregate context */
 static element_set_t *
-init_set(int item_size, MemoryContext ctx)
+init_set(bool input_is_array, int typalign, int item_size, MemoryContext ctx)
 {
     element_set_t * eset = (element_set_t *)palloc0(sizeof(element_set_t));
 
@@ -583,6 +506,8 @@ init_set(int item_size, MemoryContext ctx)
     eset->nall = 0;
     eset->nbytes = ARRAY_INIT_SIZE;
     eset->aggctx = ctx;
+    eset->input_is_array = input_is_array;
+    eset->typalign = typalign;
 
     /* the memory is zeroed */
     eset->data = palloc0(eset->nbytes);
