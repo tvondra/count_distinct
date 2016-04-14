@@ -251,10 +251,20 @@ array_agg_distinct(PG_FUNCTION_ARGS)
 
     CHECK_AGG_CONTEXT("count_distinct", fcinfo);
 
+    /* get element type for the dummy second parameter (anyarray/anynonarray item) */
+    input_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    element_type = get_element_type(input_type);
+    if (!OidIsValid(element_type))
+        element_type = input_type;
+
+    /* return empty array if the state was not initialized */
     if (PG_ARGISNULL(0))
-        PG_RETURN_NULL();
+        PG_RETURN_DATUM(PointerGetDatum(construct_empty_array(element_type)));
 
     eset = (element_set_t *)PG_GETARG_POINTER(0);
+
+    /* get detailed type information on the element type */
+    get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
 
     /* do the compaction */
     compact_set(eset, false);
@@ -262,17 +272,10 @@ array_agg_distinct(PG_FUNCTION_ARGS)
 #if DEBUG_PROFILE
     print_set_stats(eset);
 #endif
-    
-    /* get type information for the dummy second parameter (anyarray/anynonarray item) */
-    input_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-    element_type = get_element_type(input_type);
-    if (!OidIsValid(element_type))
-        element_type = input_type;
-    //elog(WARNING, "etype=%d", element_type);
-    get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
 
-    /* Copy data from compact array to array of Datums
-     * A bit suboptimal way, spends excessive memory
+    /* Copy data from compact array to a transitional array of Datums
+     * A bit suboptimal way, spends excessive memory and performs extra data copy operation.
+     * Could be rewritten in low level using ArrayCastAndSet
      */
     array_of_datums = palloc0(eset->nsorted * sizeof(Datum));
     for (i = 0; i < eset->nsorted; i++)

@@ -1,7 +1,7 @@
 {
    "name": "count_distinct",
    "abstract": "Aggregate for computing number of distinct values using a hash table.",
-   "description": "The regular COUNT(DISTINCT ...) or ARRAY_AGG(DISTINCT ...) always perform a sort, which results in bad performance if there's a lot of duplicate values. This extension implements custom count_distinct aggregate function that uses a hash table to achieve the same purpose. So far there are only INT and BIGINT aggregates, but extending it to other data types should not be difficult.",
+   "description": "The regular COUNT(DISTINCT ...) and ARRAY_AGG(DISTINCT ...) always perform a sort, which results in bad performance if there's a lot of duplicate values. This extension implements custom count_distinct and array_agg_distinct aggregate functions that can use hash-based aggregation algorithm to achieve the same purpose. So far only data types with lengths less than 8B are supported, but extending it to other data types should not be difficult.",
    "version": "2.0.0",
    "maintainer": "Tomas Vondra <tv@fuzzy.cz>",
    "license": "bsd",

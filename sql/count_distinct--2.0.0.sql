@@ -1,5 +1,3 @@
-/* count_distinct for int and bigint */
-
 CREATE OR REPLACE FUNCTION count_distinct_append(internal, anyelement)
     RETURNS internal
     AS 'count_distinct', 'count_distinct_append'

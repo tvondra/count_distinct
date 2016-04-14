@@ -19,6 +19,12 @@ reference) should be rather straight-forward and I'll do that eventually.
 But it's important to be very careful about memory consumption, as the
 hash-based approach keeps everything in RAM).
 
+If arrays are passed as input values, the `count_distinct` function computes
+the number of distinct elements in the union of those arrays. Similarly,
+`array_agg_distinct` aggregates distinct elements of input arrays
+into a one-dimensional array.
+
+All input NULLs are ignored.
 
 Performance
 -----------
