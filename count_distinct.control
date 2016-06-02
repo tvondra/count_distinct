@@ -1,4 +1,4 @@
 # count_distinct aggregate
 comment = 'Provides hashAgg-compatible based alternative to COUNT(DISTINCT ...) and ARRAY_AGG(DISTINCT ...) aggregates'
-default_version = '2.0.0'
+default_version = '2.0.1'
 relocatable = true

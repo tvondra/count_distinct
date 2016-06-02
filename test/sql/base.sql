@@ -1,7 +1,7 @@
 \set ECHO none
 BEGIN;
 
-\i sql/count_distinct--2.0.0.sql
+\i sql/count_distinct--2.0.1.sql
 
 \set ECHO all
 
