@@ -1,6 +1,8 @@
-DROP AGGREGATE array_agg_distinct(anyelement);
+DROP AGGREGATE IF EXISTS array_agg_distinct(anyelement);
+DROP AGGREGATE IF EXISTS array_agg_distinct(anynonarray);
 
-DROP FUNCTION array_agg_distinct(internal, anyelement);
+DROP FUNCTION IF EXISTS array_agg_distinct(internal, anyelement);
+DROP FUNCTION IF EXISTS array_agg_distinct(internal, anynonarray);
 
 CREATE OR REPLACE FUNCTION array_agg_distinct(internal, anynonarray)
     RETURNS anyarray
