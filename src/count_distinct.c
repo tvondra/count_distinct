@@ -28,7 +28,6 @@ PG_MODULE_MAGIC;
 
 /* if set to 1, the table resize will be profiled */
 #define DEBUG_PROFILE       0
-#define DEBUG_HISTOGRAM     0   /* prints bucket size histogram */
 
 #if (PG_VERSION_NUM >= 90000)
 
