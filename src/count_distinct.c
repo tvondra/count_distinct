@@ -63,11 +63,6 @@ PG_MODULE_MAGIC;
 
 #endif
 
-#define COMPUTE_CRC32(hash, value, length) \
-    INIT_CRC32(hash); \
-    COMP_CRC32(hash, value, length); \
-    FIN_CRC32(hash);
-
 /* This count_distinct implementation uses a simple, partially sorted array.
  *
  * It's considerably simpler than the hash-table based version, and the main
