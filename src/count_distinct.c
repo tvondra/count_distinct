@@ -1,8 +1,7 @@
 /*
-* count_distinct.c - alternative to COUNT(DISTINCT ...)
-* Copyright (C) Tomas Vondra, 2013
-*
-*/
+ * count_distinct.c - alternative to COUNT(DISTINCT ...)
+ * Copyright (C) Tomas Vondra, 2013 - 2016
+ */
 
 #include <assert.h>
 #include <stdio.h>
