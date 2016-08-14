@@ -3,6 +3,11 @@ CREATE OR REPLACE FUNCTION array_agg_distinct(internal, anynonarray)
     AS 'count_distinct', 'array_agg_distinct'
     LANGUAGE C IMMUTABLE;
 
+CREATE OR REPLACE FUNCTION count_distinct_elements_append(internal, anyarray)
+    RETURNS internal
+    AS 'count_distinct', 'count_distinct_elements_append'
+    LANGUAGE C IMMUTABLE;
+
 DO $$
 BEGIN
        IF (
@@ -67,3 +72,9 @@ BEGIN
        END IF;
 END;
 $$;
+
+CREATE AGGREGATE count_distinct_elements(anyarray) (
+       SFUNC = count_distinct_elements_append,
+       STYPE = internal,
+       FINALFUNC = count_distinct
+);

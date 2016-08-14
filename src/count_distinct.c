@@ -109,6 +109,9 @@ typedef struct element_set_t {
     uint32  nall;       /* number of all items (unsorted part may contain duplicates) */
     uint32  nbytes;     /* number of bytes in the data array */
 
+    /* used for arrays only (cache for get_typlenbyvalalign results) */
+    char    typalign;
+
     /* aggregation memory context (reference, so we don't need to do lookups repeatedly) */
     MemoryContext aggctx;
 
@@ -122,13 +125,15 @@ typedef struct element_set_t {
 PG_FUNCTION_INFO_V1(count_distinct_append);
 PG_FUNCTION_INFO_V1(count_distinct);
 PG_FUNCTION_INFO_V1(array_agg_distinct);
-
 PG_FUNCTION_INFO_V1(count_distinct_serial);
 PG_FUNCTION_INFO_V1(count_distinct_deserial);
 PG_FUNCTION_INFO_V1(count_distinct_combine);
 
+PG_FUNCTION_INFO_V1(count_distinct_elements_append);
+PG_FUNCTION_INFO_V1(count_distinct_elements);
+
 static void add_element(element_set_t * eset, char * value);
-static element_set_t *init_set(int item_size, MemoryContext ctx);
+static element_set_t *init_set(int item_size, char typalign, MemoryContext ctx);
 static int compare_items(const void * a, const void * b, void * size);
 static void compact_set(element_set_t * eset, bool need_space);
 
@@ -179,7 +184,7 @@ count_distinct_append(PG_FUNCTION_ARGS)
         if ((typlen < 0) || (! typbyval))
             elog(ERROR, "count_distinct handles only fixed-length types passed by value");
 
-        eset = init_set(typlen, aggcontext);
+        eset = init_set(typlen, typalign, aggcontext);
     } else
         eset = (element_set_t *)PG_GETARG_POINTER(0);
 
@@ -454,6 +459,120 @@ array_agg_distinct(PG_FUNCTION_ARGS)
     )));
 }
 
+Datum
+count_distinct_elements_append(PG_FUNCTION_ARGS)
+{
+    int             i;
+    element_set_t  *eset;
+
+    /* info for anyarray */
+    Oid input_type;
+    Oid element_type;
+
+    /* array data */
+    ArrayType  *input;
+    int         ndims;
+    int        *dims;
+    int         nitems;
+    bits8      *bitmap;
+    int         bitmask;
+    char       *arr_ptr;
+
+    /* memory contexts */
+    MemoryContext oldcontext;
+    MemoryContext aggcontext;
+
+    /*
+     * If the new value is NULL, we simply return the current aggregate state
+     * (it might be NULL, so check it). In this case we don't really care about
+     * the types etc.
+     *
+     * We may still get NULL elements in the array, but to check that we would
+     * have to walk the array, which does not qualify as cheap check. Also we
+     * assume that there's at least one non-NULL element, and we'll walk the
+     * array just once. It's possible we'll get empty set this way.
+     */
+    if (PG_ARGISNULL(1) && PG_ARGISNULL(0))
+        PG_RETURN_NULL();
+    else if (PG_ARGISNULL(1))
+        PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+
+    /* from now on we know the new value is not NULL */
+
+    /* get the type of array elements */
+    input_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    element_type = get_element_type(input_type);
+
+    /*
+     * parse the array contents (we know we got non-NULL value)
+     *
+     * XXX Should this handle arrays with multiple dimensions?
+     */
+    input = PG_GETARG_ARRAYTYPE_P(1);
+    ndims = ARR_NDIM(input);
+    dims = ARR_DIMS(input);
+    nitems = ArrayGetNItems(ndims, dims);
+    bitmap = ARR_NULLBITMAP(input);
+    bitmask = 1;
+    arr_ptr = ARR_DATA_PTR(input);
+
+    /* make sure we're running as part of aggregate function */
+    GET_AGG_CONTEXT("count_distinct_elements_append", fcinfo, aggcontext);
+
+    oldcontext = MemoryContextSwitchTo(aggcontext);
+
+    /* init the hash table, if needed */
+    if (PG_ARGISNULL(0))
+    {
+        int16       typlen;
+        bool        typbyval;
+        char        typalign;
+
+        /* get type information for the second parameter (anyelement item) */
+        get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
+
+        /* we can't handle varlena types yet or values passed by reference */
+        if ((typlen < 0) || (! typbyval))
+            elog(ERROR, "count_distinct_elements handles only arrays of fixed-length types passed by value");
+
+        eset = init_set(typlen, typalign, aggcontext);
+    } else
+        eset = (element_set_t *)PG_GETARG_POINTER(0);
+
+    /* add all array elements to the set */
+    for (i = 0; i < nitems; i++)
+    {
+        Datum   element;
+
+        /* ignore NULL elements */
+        if (bitmap && (*bitmap & bitmask) == 0)
+            continue;
+
+        element = fetch_att(arr_ptr, true, eset->item_size);
+
+        add_element(eset, (char*)&element);
+
+        /* advance array pointer */
+        arr_ptr = att_addlength_pointer(arr_ptr, eset->item_size, arr_ptr);
+        arr_ptr = (char *) att_align_nominal(arr_ptr, eset->typalign);
+
+        /* advance bitmap pointer if any */
+        if (bitmap)
+        {
+            bitmask <<= 1;
+            if (bitmask == 0x100)
+            {
+                bitmap++;
+                bitmask = 1;
+             }
+         }
+    }
+
+    MemoryContextSwitchTo(oldcontext);
+
+    PG_RETURN_POINTER(eset);
+}
+
 /*
  * performs compaction of the sorted set
  *
@@ -675,11 +794,12 @@ add_element(element_set_t * eset, char * value)
 
 /* XXX make sure the whole method is called within the aggregate context */
 static element_set_t *
-init_set(int item_size, MemoryContext ctx)
+init_set(int item_size, char typalign, MemoryContext ctx)
 {
     element_set_t * eset = (element_set_t *)palloc(sizeof(element_set_t));
 
     eset->item_size = item_size;
+    eset->typalign = typalign;
     eset->nsorted = 0;
     eset->nall = 0;
     eset->nbytes = ARRAY_INIT_SIZE;
