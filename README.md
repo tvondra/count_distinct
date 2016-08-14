@@ -1,7 +1,7 @@
 COUNT_DISTINCT aggregate
 ========================
-This extension provides a hash-based alternative to COUNT(DISTINCT ...)
-which for large amounts of data often ends in sorting and bad performance.
+This extension provides an alternative to COUNT(DISTINCT ...) which for large
+amounts of data often ends in sorting and poor performance.
 
 Functions
 ---------
@@ -13,7 +13,7 @@ data types passed by value (i.e. up to 8B values on 64-bit machines):
 Extending the same approach to other data types (varlena or passed by
 reference) should be rather straight-forward and I'll do that eventually.
 But it's important to be very careful about memory consumption, as the
-hash-based approach keeps everything in RAM).
+approach keeps everything in RAM and is compatible with HashAggegate).
 
 
 Performance
