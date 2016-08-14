@@ -170,14 +170,16 @@ count_distinct_append(PG_FUNCTION_ARGS)
     MemoryContext oldcontext;
     MemoryContext aggcontext;
 
-    /* OK, we do want to skip NULL values altogether */
-    if (PG_ARGISNULL(1) && PG_ARGISNULL(0)) /* both values are NULL*/
-        PG_RETURN_NULL();   /* no state, no value -> just keep NULL */
+    /*
+     * If the new value is NULL, we simply return the current aggregate state
+     * (it might be NULL, so check it).
+     */
+    if (PG_ARGISNULL(1) && PG_ARGISNULL(0))
+        PG_RETURN_NULL();
     else if (PG_ARGISNULL(1))
-        /* if there already is a state accumulated, don't forget it */
         PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 
-    /* we can be sure the value is not null (see the check above) */
+    /* from now on we know the new value is not NULL */
 
     /* switch to the per-group hash-table memory context */
     GET_AGG_CONTEXT("count_distinct_append", fcinfo, aggcontext);
@@ -195,11 +197,10 @@ count_distinct_append(PG_FUNCTION_ARGS)
         get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
 
         /* we can't handle varlena types yet or values passed by reference */
-        if ((typlen == -1) || (! typbyval))
+        if ((typlen < 0) || (! typbyval))
             elog(ERROR, "count_distinct handles only fixed-length types passed by value");
 
         eset = init_set(typlen, aggcontext);
-
     } else
         eset = (element_set_t *)PG_GETARG_POINTER(0);
 
@@ -214,7 +215,6 @@ count_distinct_append(PG_FUNCTION_ARGS)
 Datum
 count_distinct(PG_FUNCTION_ARGS)
 {
-
     element_set_t * eset;
 
     CHECK_AGG_CONTEXT("count_distinct", fcinfo);
@@ -232,10 +232,10 @@ count_distinct(PG_FUNCTION_ARGS)
 #endif
 
     PG_RETURN_INT64(eset->nall);
-
 }
 
-/* performs compaction of the set
+/*
+ * performs compaction of the sorted set
  *
  * Sorts the unsorted data, removes duplicate values and then merges it
  * into the already sorted part (skipping duplicate values).
@@ -249,9 +249,9 @@ compact_set(element_set_t * eset, bool need_space)
     char   *base = eset->data + (eset->nsorted * eset->item_size);
     char   *last = base;
     char   *curr;
-    int     i;
-    int     cnt = 1;
-    double  free_fract;
+    int        i;
+    int        cnt = 1;
+    double    free_fract;
 
     Assert(eset->nsorted + eset->nall > 0);
     Assert(eset->data != NULL);
@@ -262,18 +262,21 @@ compact_set(element_set_t * eset, bool need_space)
     if (eset->nall == eset->nsorted)
         return;
 
-    /* sort the new items
+    /*
+     * sort the array with new items
      *
-     * TODO Consider replacing this insert-sort for small number of items (for <64 items
-     *      it might be faster than qsort)
+     * TODO Consider replacing this insert-sort for small number of items
+     * (for <64 items it might be faster than qsort)
      */
     qsort_arg(eset->data + eset->nsorted * eset->item_size,
               eset->nall - eset->nsorted, eset->item_size,
               compare_items, &eset->item_size);
 
     /*
-     * Remove duplicities from the sorted array. That is - walk through the array,
-     * compare each item with the previous one, and only keep it if it's different.
+     * Remove duplicate values from the sorted array. That is - walk through
+     * the array, compare each item with the preceding one, and only keep it
+     * if they differ. We skip the first value, as it's always unique (there
+     * is no preceding value it might be equal to).
      */
     for (i = 1; i < eset->nall - eset->nsorted; i++)
     {
@@ -282,7 +285,6 @@ compact_set(element_set_t * eset, bool need_space)
         /* items differ (keep the item) */
         if (memcmp(last, curr, eset->item_size) != 0)
         {
-
             last += eset->item_size;
             cnt  += 1;
 
@@ -295,16 +297,18 @@ compact_set(element_set_t * eset, bool need_space)
     /* duplicities removed -> update the number of items in this part */
     eset->nall = eset->nsorted + cnt;
 
-
     /* If this is the first sorted part, we can just use it as the 'sorted' part. */
     if (eset->nsorted == 0)
         eset->nsorted = eset->nall;
 
-    /* TODO Another optimization opportunity is that we don't really need to merge the
-     *      arrays, if we freed enough space by processing the new items. We may postpone
-     *      that until the last call (when finalizing the aggregate). OTOH if that happens,
-     *      it shouldn't be that expensive to merge because the number of new items will
-     *      be small (as we've removed a enough duplicities).
+    /*
+     * TODO Another optimization opportunity is that we don't really need to
+     *        merge the arrays, if we freed enough space by processing the new
+     *        items. We may postpone that until the last call (when finalizing
+     *        the aggregate). OTOH if that happens, it shouldn't be that
+     *        expensive to merge because the number of new items will be small
+     *        (as we've removed a enough duplicities). But we still need to
+     *        shuffle the data around, which wastes memory bandwidth.
      */
 
     /* If a merge is needed, walk through the arrays and keep unique values. */
@@ -313,7 +317,7 @@ compact_set(element_set_t * eset, bool need_space)
         MemoryContext oldctx = MemoryContextSwitchTo(eset->aggctx);
 
         /* allocate new array for the result */
-        char * data = palloc0(eset->nbytes);
+        char * data = palloc(eset->nbytes);
         char * ptr = data;
 
         /* already sorted array */
@@ -326,15 +330,18 @@ compact_set(element_set_t * eset, bool need_space)
 
         MemoryContextSwitchTo(oldctx);
 
-        /* TODO There's a possibility for optimization - if we get already sorted
-         *      items (e.g. because of a subplan), we can just copy the arrays.
-         *      The check is as simple as (a_first > b_last) || (a_last < b_first).
-         *      OTOH this might be pointless in practice.
+        /*
+         * TODO There's a possibility for optimization - if we get already
+         *        sorted items (e.g. because of a subplan), we can just copy the
+         *        arrays. The check is as simple as checking
+         *
+         *        (a_first > b_last) || (a_last < b_first).
+         *
+         *        OTOH this is probably very unlikely to happen in practice.
          */
 
         while (true)
         {
-
             int r = memcmp(a, b, eset->item_size);
 
             /*
@@ -361,12 +368,11 @@ compact_set(element_set_t * eset, bool need_space)
             ptr += eset->item_size;
 
             /*
-             * If we reached the end of (at least) one of the arrays, copy all the remaining
-             * items and we're done.
+             * If we reached the end of (at least) one of the arrays, copy all
+             * the remaining items and we're done.
              */
             if ((a == a_max) || (b == b_max))
             {
-
                 if (a != a_max)         /* b ended -> copy rest of a */
                 {
                     memcpy(ptr, a, a_max - a);
@@ -379,26 +385,29 @@ compact_set(element_set_t * eset, bool need_space)
                 }
 
                 break;
-
             }
-
         }
 
-        /* update the counts */
+        Assert((ptr - data) <= (eset->nall * eset->item_size));
+
+        /*
+         * Update the counts with the result of the merge (there might be
+         * duplicities between the two parts, and we have eliminated them).
+         */
         eset->nsorted = (ptr - data) / eset->item_size;
         eset->nall = eset->nsorted;
         pfree(eset->data);
         eset->data = data;
-
     }
 
-    /* free space as a fraction of the total size */
-    free_fract = (eset->nbytes - eset->nall * eset->item_size) * 1.0 / eset->nbytes;
+    /* compute free space as a fraction of the total size */
+    free_fract
+        = (eset->nbytes - eset->nall * eset->item_size) * 1.0 / eset->nbytes;
 
     /*
-     * When we need space for more items (e.g. not when finalizing the aggregate
-     * result) we need to check that, and enlarge the array when needed. We
-     * require ARRAY_FREE_FRACT of the space to be free.
+     * If we need space for more items (e.g. not when finalizing the aggregate
+     * result), enlarge the array when needed. We require ARRAY_FREE_FRACT of
+     * the space to be free.
      */
     if (need_space && (free_fract < ARRAY_FREE_FRACT))
     {
@@ -410,7 +419,10 @@ compact_set(element_set_t * eset, bool need_space)
 static void
 add_element(element_set_t * eset, char * value)
 {
-    /* if there's not enough space for another item, perform compaction */
+    /*
+     * If there's not enough space for another item, perform compaction
+     * (this also allocates enough free space for new entries).
+     */
     if (eset->item_size * (eset->nall + 1) > eset->nbytes)
         compact_set(eset, true);
 
@@ -426,7 +438,7 @@ add_element(element_set_t * eset, char * value)
 static element_set_t *
 init_set(int item_size, MemoryContext ctx)
 {
-    element_set_t * eset = (element_set_t *)palloc0(sizeof(element_set_t));
+    element_set_t * eset = (element_set_t *)palloc(sizeof(element_set_t));
 
     eset->item_size = item_size;
     eset->nsorted = 0;
@@ -434,8 +446,7 @@ init_set(int item_size, MemoryContext ctx)
     eset->nbytes = ARRAY_INIT_SIZE;
     eset->aggctx = ctx;
 
-    /* the memory is zeroed */
-    eset->data = palloc0(eset->nbytes);
+    eset->data = palloc(eset->nbytes);
 
     return eset;
 }
@@ -444,11 +455,12 @@ init_set(int item_size, MemoryContext ctx)
 static void
 print_set_stats(element_set_t * eset)
 {
-    elog(WARNING, "bytes=%d item=%d all=%d sorted=%d", eset->nbytes, eset->item_size, eset->nall, eset->nsorted);
+    elog(WARNING, "bytes=%d item=%d all=%d sorted=%d",
+                  eset->nbytes, eset->item_size, eset->nall, eset->nsorted);
 }
 #endif
 
-/* just compare the data directly */
+/* just compare the data directly using memcmp */
 static int
 compare_items(const void * a, const void * b, void * size)
 {
