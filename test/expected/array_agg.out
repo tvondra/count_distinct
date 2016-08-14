@@ -1,0 +1,153 @@
+\set ECHO none
+-- int
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::int)) a FROM generate_series(1,50) s(x))_;
+                                                                   array_agg                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------
+ {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50}
+(1 row)
+
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,10)::int)) a FROM generate_series(1,50) s(x))_;
+       array_agg       
+-----------------------
+ {0,1,2,3,4,5,6,7,8,9}
+(1 row)
+
+-- bigint
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::bigint)) a FROM generate_series(1,50) s(x))_;
+                                                                   array_agg                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------
+ {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50}
+(1 row)
+
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,10)::bigint)) a FROM generate_series(1,50) s(x))_;
+       array_agg       
+-----------------------
+ {0,1,2,3,4,5,6,7,8,9}
+(1 row)
+
+-- timestamp
+SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('epoch'::timestamp + (x || ' days')::interval)) a FROM generate_series(1,50) s(x))_;
+          unnest          
+--------------------------
+ Fri Jan 02 00:00:00 1970
+ Sat Jan 03 00:00:00 1970
+ Sun Jan 04 00:00:00 1970
+ Mon Jan 05 00:00:00 1970
+ Tue Jan 06 00:00:00 1970
+ Wed Jan 07 00:00:00 1970
+ Thu Jan 08 00:00:00 1970
+ Fri Jan 09 00:00:00 1970
+ Sat Jan 10 00:00:00 1970
+ Sun Jan 11 00:00:00 1970
+ Mon Jan 12 00:00:00 1970
+ Tue Jan 13 00:00:00 1970
+ Wed Jan 14 00:00:00 1970
+ Thu Jan 15 00:00:00 1970
+ Fri Jan 16 00:00:00 1970
+ Sat Jan 17 00:00:00 1970
+ Sun Jan 18 00:00:00 1970
+ Mon Jan 19 00:00:00 1970
+ Tue Jan 20 00:00:00 1970
+ Wed Jan 21 00:00:00 1970
+ Thu Jan 22 00:00:00 1970
+ Fri Jan 23 00:00:00 1970
+ Sat Jan 24 00:00:00 1970
+ Sun Jan 25 00:00:00 1970
+ Mon Jan 26 00:00:00 1970
+ Tue Jan 27 00:00:00 1970
+ Wed Jan 28 00:00:00 1970
+ Thu Jan 29 00:00:00 1970
+ Fri Jan 30 00:00:00 1970
+ Sat Jan 31 00:00:00 1970
+ Sun Feb 01 00:00:00 1970
+ Mon Feb 02 00:00:00 1970
+ Tue Feb 03 00:00:00 1970
+ Wed Feb 04 00:00:00 1970
+ Thu Feb 05 00:00:00 1970
+ Fri Feb 06 00:00:00 1970
+ Sat Feb 07 00:00:00 1970
+ Sun Feb 08 00:00:00 1970
+ Mon Feb 09 00:00:00 1970
+ Tue Feb 10 00:00:00 1970
+ Wed Feb 11 00:00:00 1970
+ Thu Feb 12 00:00:00 1970
+ Fri Feb 13 00:00:00 1970
+ Sat Feb 14 00:00:00 1970
+ Sun Feb 15 00:00:00 1970
+ Mon Feb 16 00:00:00 1970
+ Tue Feb 17 00:00:00 1970
+ Wed Feb 18 00:00:00 1970
+ Thu Feb 19 00:00:00 1970
+ Fri Feb 20 00:00:00 1970
+(50 rows)
+
+SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('epoch'::timestamptz + (x || ' days')::interval)) a FROM generate_series(1,50) s(x))_;
+            unnest            
+------------------------------
+ Thu Jan 01 16:00:00 1970 PST
+ Fri Jan 02 16:00:00 1970 PST
+ Sat Jan 03 16:00:00 1970 PST
+ Sun Jan 04 16:00:00 1970 PST
+ Mon Jan 05 16:00:00 1970 PST
+ Tue Jan 06 16:00:00 1970 PST
+ Wed Jan 07 16:00:00 1970 PST
+ Thu Jan 08 16:00:00 1970 PST
+ Fri Jan 09 16:00:00 1970 PST
+ Sat Jan 10 16:00:00 1970 PST
+ Sun Jan 11 16:00:00 1970 PST
+ Mon Jan 12 16:00:00 1970 PST
+ Tue Jan 13 16:00:00 1970 PST
+ Wed Jan 14 16:00:00 1970 PST
+ Thu Jan 15 16:00:00 1970 PST
+ Fri Jan 16 16:00:00 1970 PST
+ Sat Jan 17 16:00:00 1970 PST
+ Sun Jan 18 16:00:00 1970 PST
+ Mon Jan 19 16:00:00 1970 PST
+ Tue Jan 20 16:00:00 1970 PST
+ Wed Jan 21 16:00:00 1970 PST
+ Thu Jan 22 16:00:00 1970 PST
+ Fri Jan 23 16:00:00 1970 PST
+ Sat Jan 24 16:00:00 1970 PST
+ Sun Jan 25 16:00:00 1970 PST
+ Mon Jan 26 16:00:00 1970 PST
+ Tue Jan 27 16:00:00 1970 PST
+ Wed Jan 28 16:00:00 1970 PST
+ Thu Jan 29 16:00:00 1970 PST
+ Fri Jan 30 16:00:00 1970 PST
+ Sat Jan 31 16:00:00 1970 PST
+ Sun Feb 01 16:00:00 1970 PST
+ Mon Feb 02 16:00:00 1970 PST
+ Tue Feb 03 16:00:00 1970 PST
+ Wed Feb 04 16:00:00 1970 PST
+ Thu Feb 05 16:00:00 1970 PST
+ Fri Feb 06 16:00:00 1970 PST
+ Sat Feb 07 16:00:00 1970 PST
+ Sun Feb 08 16:00:00 1970 PST
+ Mon Feb 09 16:00:00 1970 PST
+ Tue Feb 10 16:00:00 1970 PST
+ Wed Feb 11 16:00:00 1970 PST
+ Thu Feb 12 16:00:00 1970 PST
+ Fri Feb 13 16:00:00 1970 PST
+ Sat Feb 14 16:00:00 1970 PST
+ Sun Feb 15 16:00:00 1970 PST
+ Mon Feb 16 16:00:00 1970 PST
+ Tue Feb 17 16:00:00 1970 PST
+ Wed Feb 18 16:00:00 1970 PST
+ Thu Feb 19 16:00:00 1970 PST
+(50 rows)
+
+-- bool
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,2)::bool)) a FROM generate_series(1,50) s(x))_;
+ array_agg 
+-----------
+ {f,t}
+(1 row)
+
+-- int2
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::int2)) a FROM generate_series(1,50) s(x))_;
+                                                                   array_agg                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------
+ {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50}
+(1 row)
+
+ROLLBACK;

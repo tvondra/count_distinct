@@ -10,6 +10,11 @@ CREATE OR REPLACE FUNCTION count_distinct(internal)
     AS 'count_distinct', 'count_distinct'
     LANGUAGE C IMMUTABLE;
 
+CREATE OR REPLACE FUNCTION array_agg_distinct(internal, anynonarray)
+    RETURNS anyarray
+    AS 'count_distinct', 'array_agg_distinct'
+    LANGUAGE C IMMUTABLE;
+
 DO $$
 BEGIN
        IF (
@@ -39,7 +44,7 @@ BEGIN
                   AS 'count_distinct', 'count_distinct_combine'
                   LANGUAGE C IMMUTABLE;
 
-              /* Create the aggregate function itself */
+              /* Create the aggregate functions */
               CREATE AGGREGATE count_distinct(anyelement) (
                      SFUNC = count_distinct_append,
                      STYPE = internal,
@@ -49,14 +54,32 @@ BEGIN
                      DESERIALFUNC = count_distinct_deserial,
                      PARALLEL = SAFE
               );
+              
+              CREATE AGGREGATE array_agg_distinct(anynonarray) (
+                     SFUNC = count_distinct_append,
+                     STYPE = internal,
+                     FINALFUNC = array_agg_distinct,
+                     FINALFUNC_EXTRA,
+                     COMBINEFUNC = count_distinct_combine,
+                     SERIALFUNC = count_distinct_serial,
+                     DESERIALFUNC = count_distinct_deserial,
+                     PARALLEL = SAFE
+              );
        ELSE
               /* Server does not support parallel aggregation (pre-9.6) */
 
-              /* Create the aggregate function itself */
+              /* Create the aggregate functions */
               CREATE AGGREGATE count_distinct(anyelement) (
                      SFUNC = count_distinct_append,
                      STYPE = internal,
                      FINALFUNC = count_distinct
+              );
+              
+              CREATE AGGREGATE array_agg_distinct(anynonarray) (
+                     SFUNC = count_distinct_append,
+                     STYPE = internal,
+                     FINALFUNC = array_agg_distinct,
+                     FINALFUNC_EXTRA
               );
        END IF;
 END;
