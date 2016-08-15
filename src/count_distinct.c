@@ -146,16 +146,12 @@ typedef struct element_set_t {
 
 /* prototypes */
 PG_FUNCTION_INFO_V1(count_distinct_append);
+PG_FUNCTION_INFO_V1(count_distinct_elements_append);
 PG_FUNCTION_INFO_V1(count_distinct);
 
-PG_FUNCTION_INFO_V1(count_distinct_elements_append);
-PG_FUNCTION_INFO_V1(count_distinct_elements);
-
 Datum count_distinct_append(PG_FUNCTION_ARGS);
-Datum count_distinct(PG_FUNCTION_ARGS);
-
 Datum count_distinct_elements_append(PG_FUNCTION_ARGS);
-Datum count_distinct_elements(PG_FUNCTION_ARGS);
+Datum count_distinct(PG_FUNCTION_ARGS);
 
 static void add_element(element_set_t * eset, char * value);
 static element_set_t *init_set(int item_size, char typalign, MemoryContext ctx);
@@ -219,28 +215,6 @@ count_distinct_append(PG_FUNCTION_ARGS)
     MemoryContextSwitchTo(oldcontext);
 
     PG_RETURN_POINTER(eset);
-}
-
-Datum
-count_distinct(PG_FUNCTION_ARGS)
-{
-    element_set_t * eset;
-
-    CHECK_AGG_CONTEXT("count_distinct", fcinfo);
-
-    if (PG_ARGISNULL(0))
-        PG_RETURN_NULL();
-
-    eset = (element_set_t *)PG_GETARG_POINTER(0);
-
-    /* do the compaction */
-    compact_set(eset, false);
-
-#if DEBUG_PROFILE
-    print_set_stats(eset);
-#endif
-
-    PG_RETURN_INT64(eset->nall);
 }
 
 Datum
@@ -355,6 +329,28 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
     MemoryContextSwitchTo(oldcontext);
 
     PG_RETURN_POINTER(eset);
+}
+
+Datum
+count_distinct(PG_FUNCTION_ARGS)
+{
+    element_set_t * eset;
+
+    CHECK_AGG_CONTEXT("count_distinct", fcinfo);
+
+    if (PG_ARGISNULL(0))
+        PG_RETURN_NULL();
+
+    eset = (element_set_t *)PG_GETARG_POINTER(0);
+
+    /* do the compaction */
+    compact_set(eset, false);
+
+#if DEBUG_PROFILE
+    print_set_stats(eset);
+#endif
+
+    PG_RETURN_INT64(eset->nall);
 }
 
 /*
