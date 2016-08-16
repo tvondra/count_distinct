@@ -258,147 +258,149 @@ compact_set(element_set_t * eset, bool need_space)
     Assert(eset->nsorted <= eset->nall);
     Assert(eset->nall * eset->item_size <= eset->nbytes);
 
-    /* if there are no new (unsorted) items, we're done */
-    if (eset->nall == eset->nsorted)
-        return;
-
-    /*
-     * sort the array with new items
-     *
-     * TODO Consider replacing this insert-sort for small number of items
-     * (for <64 items it might be faster than qsort)
-     */
-    qsort_arg(eset->data + eset->nsorted * eset->item_size,
-              eset->nall - eset->nsorted, eset->item_size,
-              compare_items, &eset->item_size);
-
-    /*
-     * Remove duplicate values from the sorted array. That is - walk through
-     * the array, compare each item with the preceding one, and only keep it
-     * if they differ. We skip the first value, as it's always unique (there
-     * is no preceding value it might be equal to).
-     */
-    for (i = 1; i < eset->nall - eset->nsorted; i++)
+    /* if there are no new (unsorted) items, we don't need to sort */
+    if (eset->nall > eset->nsorted)
     {
-        curr = base + (i * eset->item_size);
-
-        /* items differ (keep the item) */
-        if (memcmp(last, curr, eset->item_size) != 0)
-        {
-            last += eset->item_size;
-            cnt  += 1;
-
-            /* only copy if really needed */
-            if (last != curr)
-                memcpy(last, curr, eset->item_size);
-        }
-    }
-
-    /* duplicities removed -> update the number of items in this part */
-    eset->nall = eset->nsorted + cnt;
-
-    /* If this is the first sorted part, we can just use it as the 'sorted' part. */
-    if (eset->nsorted == 0)
-        eset->nsorted = eset->nall;
-
-    /*
-     * TODO Another optimization opportunity is that we don't really need to
-     *        merge the arrays, if we freed enough space by processing the new
-     *        items. We may postpone that until the last call (when finalizing
-     *        the aggregate). OTOH if that happens, it shouldn't be that
-     *        expensive to merge because the number of new items will be small
-     *        (as we've removed a enough duplicities). But we still need to
-     *        shuffle the data around, which wastes memory bandwidth.
-     */
-
-    /* If a merge is needed, walk through the arrays and keep unique values. */
-    if (eset->nsorted < eset->nall)
-    {
-        MemoryContext oldctx = MemoryContextSwitchTo(eset->aggctx);
-
-        /* allocate new array for the result */
-        char * data = palloc(eset->nbytes);
-        char * ptr = data;
-
-        /* already sorted array */
-        char * a = eset->data;
-        char * a_max = eset->data + eset->nsorted * eset->item_size;
-
-        /* the new array */
-        char * b = eset->data + (eset->nsorted * eset->item_size);
-        char * b_max = eset->data + eset->nall * eset->item_size;
-
-        MemoryContextSwitchTo(oldctx);
+        /*
+         * sort the array with new items, but only when not already sorted
+         *
+         * TODO Consider replacing this insert-sort for small number of items
+         * (for <64 items it might be faster than qsort)
+         */
+        qsort_arg(eset->data + eset->nsorted * eset->item_size,
+                  eset->nall - eset->nsorted, eset->item_size,
+                  compare_items, &eset->item_size);
 
         /*
-         * TODO There's a possibility for optimization - if we get already
-         *        sorted items (e.g. because of a subplan), we can just copy the
-         *        arrays. The check is as simple as checking
-         *
-         *        (a_first > b_last) || (a_last < b_first).
-         *
-         *        OTOH this is probably very unlikely to happen in practice.
+         * Remove duplicate values from the sorted array. That is - walk through
+         * the array, compare each item with the preceding one, and only keep it
+         * if they differ. We skip the first value, as it's always unique (there
+         * is no preceding value it might be equal to).
          */
-
-        while (true)
+        for (i = 1; i < eset->nall - eset->nsorted; i++)
         {
-            int r = memcmp(a, b, eset->item_size);
+            curr = base + (i * eset->item_size);
 
-            /*
-             * If both values are the same, copy one of them into the result and increment
-             * both. Otherwise, increment only the smaller value.
-             */
-            if (r == 0)
+            /* items differ (keep the item) */
+            if (memcmp(last, curr, eset->item_size) != 0)
             {
-                memcpy(ptr, a, eset->item_size);
-                a += eset->item_size;
-                b += eset->item_size;
-            }
-            else if (r < 0)
-            {
-                memcpy(ptr, a, eset->item_size);
-                a += eset->item_size;
-            }
-            else
-            {
-                memcpy(ptr, b, eset->item_size);
-                b += eset->item_size;
-            }
+                last += eset->item_size;
+                cnt  += 1;
 
-            ptr += eset->item_size;
-
-            /*
-             * If we reached the end of (at least) one of the arrays, copy all
-             * the remaining items and we're done.
-             */
-            if ((a == a_max) || (b == b_max))
-            {
-                if (a != a_max)         /* b ended -> copy rest of a */
-                {
-                    memcpy(ptr, a, a_max - a);
-                    ptr += (a_max - a);
-                }
-                else if (b != b_max)    /* a ended -> copy rest of b */
-                {
-                    memcpy(ptr, b, b_max - b);
-                    ptr += (b_max - b);
-                }
-
-                break;
+                /* only copy if really needed */
+                if (last != curr)
+                    memcpy(last, curr, eset->item_size);
             }
         }
 
-        Assert((ptr - data) <= (eset->nall * eset->item_size));
+        /* duplicities removed -> update the number of items in this part */
+        eset->nall = eset->nsorted + cnt;
+
+        /* If this is the first sorted part, we can just use it as the 'sorted' part. */
+        if (eset->nsorted == 0)
+            eset->nsorted = eset->nall;
 
         /*
-         * Update the counts with the result of the merge (there might be
-         * duplicities between the two parts, and we have eliminated them).
+         * TODO Another optimization opportunity is that we don't really need to
+         *        merge the arrays, if we freed enough space by processing the new
+         *        items. We may postpone that until the last call (when finalizing
+         *        the aggregate). OTOH if that happens, it shouldn't be that
+         *        expensive to merge because the number of new items will be small
+         *        (as we've removed a enough duplicities). But we still need to
+         *        shuffle the data around, which wastes memory bandwidth.
          */
-        eset->nsorted = (ptr - data) / eset->item_size;
-        eset->nall = eset->nsorted;
-        pfree(eset->data);
-        eset->data = data;
+
+        /* If a merge is needed, walk through the arrays and keep unique values. */
+        if (eset->nsorted < eset->nall)
+        {
+            MemoryContext oldctx = MemoryContextSwitchTo(eset->aggctx);
+
+            /* allocate new array for the result */
+            char * data = palloc(eset->nbytes);
+            char * ptr = data;
+
+            /* already sorted array */
+            char * a = eset->data;
+            char * a_max = eset->data + eset->nsorted * eset->item_size;
+
+            /* the new array */
+            char * b = eset->data + (eset->nsorted * eset->item_size);
+            char * b_max = eset->data + eset->nall * eset->item_size;
+
+            MemoryContextSwitchTo(oldctx);
+
+            /*
+             * TODO There's a possibility for optimization - if we get already
+             *        sorted items (e.g. because of a subplan), we can just copy the
+             *        arrays. The check is as simple as checking
+             *
+             *        (a_first > b_last) || (a_last < b_first).
+             *
+             *        OTOH this is probably very unlikely to happen in practice.
+             */
+
+            while (true)
+            {
+                int r = memcmp(a, b, eset->item_size);
+
+                /*
+                 * If both values are the same, copy one of them into the result and increment
+                 * both. Otherwise, increment only the smaller value.
+                 */
+                if (r == 0)
+                {
+                    memcpy(ptr, a, eset->item_size);
+                    a += eset->item_size;
+                    b += eset->item_size;
+                }
+                else if (r < 0)
+                {
+                    memcpy(ptr, a, eset->item_size);
+                    a += eset->item_size;
+                }
+                else
+                {
+                    memcpy(ptr, b, eset->item_size);
+                    b += eset->item_size;
+                }
+
+                ptr += eset->item_size;
+
+                /*
+                 * If we reached the end of (at least) one of the arrays, copy all
+                 * the remaining items and we're done.
+                 */
+                if ((a == a_max) || (b == b_max))
+                {
+                    if (a != a_max)         /* b ended -> copy rest of a */
+                    {
+                        memcpy(ptr, a, a_max - a);
+                        ptr += (a_max - a);
+                    }
+                    else if (b != b_max)    /* a ended -> copy rest of b */
+                    {
+                        memcpy(ptr, b, b_max - b);
+                        ptr += (b_max - b);
+                    }
+
+                    break;
+                }
+            }
+
+            Assert((ptr - data) <= (eset->nall * eset->item_size));
+
+            /*
+             * Update the counts with the result of the merge (there might be
+             * duplicities between the two parts, and we have eliminated them).
+             */
+            eset->nsorted = (ptr - data) / eset->item_size;
+            eset->nall = eset->nsorted;
+            pfree(eset->data);
+            eset->data = data;
+        }
     }
+
+    Assert(eset->nall == eset->nsorted);
 
     /* compute free space as a fraction of the total size */
     free_fract
