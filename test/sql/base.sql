@@ -63,9 +63,9 @@ SELECT count_distinct_elements(z) FROM (
     SELECT ARRAY[mod(x,10)::bool, mod(x+1,10)::bool] AS z FROM generate_series(1,1000) s(x)
 ) foo;
 
--- array of int2
+-- array of int2 with nulls
 SELECT count_distinct_elements(z) FROM (
-    SELECT ARRAY[x::int2, (x+1)::int2] AS z FROM generate_series(1,1000) s(x)
+    SELECT ARRAY[NULL, x::int2, NULL, NULL, (x+1)::int2, NULL] AS z FROM generate_series(1,1000) s(x)
 ) foo;
 
 SELECT count_distinct_elements(z) FROM (

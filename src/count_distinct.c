@@ -300,21 +300,21 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
     /* add all array elements to the set */
     for (i = 0; i < nitems; i++)
     {
-        Datum   element;
+        /* process the element if it is not null */
+        if (!bitmap || (*bitmap & bitmask) != 0)
+        {
+            Datum   element;
 
-        /* ignore NULL elements */
-        if (bitmap && (*bitmap & bitmask) == 0)
-            continue;
+            element = fetch_att(arr_ptr, true, eset->item_size);
 
-        element = fetch_att(arr_ptr, true, eset->item_size);
+            add_element(eset, (char*)&element);
 
-        add_element(eset, (char*)&element);
+            /* advance array pointer */
+            arr_ptr = att_addlength_pointer(arr_ptr, eset->item_size, arr_ptr);
+            arr_ptr = (char *) att_align_nominal(arr_ptr, eset->typalign);
+        }
 
-        /* advance array pointer */
-        arr_ptr = att_addlength_pointer(arr_ptr, eset->item_size, arr_ptr);
-        arr_ptr = (char *) att_align_nominal(arr_ptr, eset->typalign);
-
-        /* advance bitmap pointer if any */
+        /* advance nulls bitmap pointer if any */
         if (bitmap)
         {
             bitmask <<= 1;
@@ -322,8 +322,8 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
             {
                 bitmap++;
                 bitmask = 1;
-             }
-         }
+            }
+        }
     }
 
     MemoryContextSwitchTo(oldcontext);
