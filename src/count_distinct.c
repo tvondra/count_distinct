@@ -15,6 +15,7 @@
 #include "utils/datum.h"
 #include "utils/array.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/numeric.h"
 #include "utils/builtins.h"
 #include "catalog/pg_type.h"
@@ -622,7 +623,24 @@ compact_set(element_set_t * eset, bool need_space)
      */
     if (need_space && (free_fract < ARRAY_FREE_FRACT))
     {
-        eset->nbytes *= 2;
+        /*
+         * For small requests, we simply double the array size, because that's
+         * what AllocSet will give use anyway. No point in trying to save
+         * memory by growing the array slower.
+         *
+         * After reaching ALLOCSET_SEPARATE_THRESHOLD, the memory is allocated
+         * in separate blocks, thus we can be smarter and grow the memory
+         * a bit slower (just enough to get the 20% free space).
+         *
+         * XXX If the memory context uses smaller blocks, the switch to special
+         * blocks may happen before ALLOCSET_SEPARATE_THRESHOLD. This limit
+         * is simply global guarantee for all possible AllocSets.
+         */
+        if ((eset->nbytes / 0.8) < ALLOCSET_SEPARATE_THRESHOLD)
+            eset->nbytes *= 2;
+        else
+            eset->nbytes /= 0.8;
+
         eset->data = repalloc(eset->data, eset->nbytes);
     }
 }
