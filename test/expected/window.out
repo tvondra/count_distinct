@@ -25,9 +25,35 @@ select count_distinct(a) over (order by a rows between unbounded preceding and c
              20
 (20 rows)
 
-select count_distinct(a) over (order by a rows between 10 preceding and 10 following row)
+select count_distinct(a) over (order by a rows between 10 preceding and 10 following)
   from generate_series(1, 25) a;
-ERROR:  syntax error at or near "row"
-LINE 1: ... (order by a rows between 10 preceding and 10 following row)
-                                                                   ^
+ count_distinct 
+----------------
+             11
+             12
+             13
+             14
+             15
+             16
+             17
+             18
+             19
+             20
+             21
+             21
+             21
+             21
+             21
+             20
+             19
+             18
+             17
+             16
+             15
+             14
+             13
+             12
+             11
+(25 rows)
+
 ROLLBACK;
