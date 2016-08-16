@@ -1,0 +1,33 @@
+\set ECHO none
+select count_distinct(a) over (order by a rows between unbounded preceding and current row)
+  from generate_series(1, 20) a;
+ count_distinct 
+----------------
+              1
+              2
+              3
+              4
+              5
+              6
+              7
+              8
+              9
+             10
+             11
+             12
+             13
+             14
+             15
+             16
+             17
+             18
+             19
+             20
+(20 rows)
+
+select count_distinct(a) over (order by a rows between 10 preceding and 10 following row)
+  from generate_series(1, 25) a;
+ERROR:  syntax error at or near "row"
+LINE 1: ... (order by a rows between 10 preceding and 10 following row)
+                                                                   ^
+ROLLBACK;
