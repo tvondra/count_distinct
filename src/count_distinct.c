@@ -344,10 +344,6 @@ count_distinct_combine(PG_FUNCTION_ARGS)
 
         MemoryContextSwitchTo(old_context);
 
-        /* free the internal state */
-        pfree(eset2->data);
-        eset2->data = NULL;
-
         PG_RETURN_POINTER(eset1);
     }
 
@@ -430,10 +426,6 @@ count_distinct_combine(PG_FUNCTION_ARGS)
 
     /* we might have eliminated some duplicate elements */
     Assert((tmp - data) <= ((eset1->nall + eset2->nall) * eset1->item_size));
-
-    /* free the two arrays */
-    pfree(eset1->data);
-    pfree(eset2->data);
 
     eset1->data = data;
 
