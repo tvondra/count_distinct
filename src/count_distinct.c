@@ -474,9 +474,9 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
     int         ndims;
     int        *dims;
     int         nitems;
-    bits8      *bitmap;
-    int         bitmask;
+    bits8      *null_bitmap;
     char       *arr_ptr;
+    Datum       element;
 
     /* memory contexts */
     MemoryContext oldcontext;
@@ -512,8 +512,7 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
     ndims = ARR_NDIM(input);
     dims = ARR_DIMS(input);
     nitems = ArrayGetNItems(ndims, dims);
-    bitmap = ARR_NULLBITMAP(input);
-    bitmask = 1;
+    null_bitmap = ARR_NULLBITMAP(input);
     arr_ptr = ARR_DATA_PTR(input);
 
     /* make sure we're running as part of aggregate function */
@@ -536,36 +535,24 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
             elog(ERROR, "count_distinct_elements handles only arrays of fixed-length types passed by value");
 
         eset = init_set(typlen, typalign, aggcontext);
-    } else
+    }
+    else
         eset = (element_set_t *)PG_GETARG_POINTER(0);
 
     /* add all array elements to the set */
     for (i = 0; i < nitems; i++)
     {
-        /* process the element if it is not null */
-        if (!bitmap || (*bitmap & bitmask) != 0)
-        {
-            Datum   element;
+        /* ignore nulls */
+        if (null_bitmap && !(null_bitmap[i / 8] & (1 << (i % 8))))
+            continue;
 
-            element = fetch_att(arr_ptr, true, eset->item_size);
+        element = fetch_att(arr_ptr, true, eset->item_size);
 
-            add_element(eset, (char*)&element);
+        add_element(eset, (char*)&element);
 
-            /* advance array pointer */
-            arr_ptr = att_addlength_pointer(arr_ptr, eset->item_size, arr_ptr);
-            arr_ptr = (char *) att_align_nominal(arr_ptr, eset->typalign);
-        }
-
-        /* advance nulls bitmap pointer if any */
-        if (bitmap)
-        {
-            bitmask <<= 1;
-            if (bitmask == 0x100)
-            {
-                bitmap++;
-                bitmask = 1;
-            }
-        }
+        /* advance array pointer */
+        arr_ptr = att_addlength_pointer(arr_ptr, eset->item_size, arr_ptr);
+        arr_ptr = (char *) att_align_nominal(arr_ptr, eset->typalign);
     }
 
     MemoryContextSwitchTo(oldcontext);
