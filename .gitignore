@@ -2,3 +2,5 @@
 results
 *.so
 *.o
+regression.diffs
+regression.out
