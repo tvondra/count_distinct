@@ -113,7 +113,7 @@ and you're done. You may also install the extension manually:
 And if you're on an older version (pre-9.1), you have to run the SQL
 script manually
 
-    $ psql dbname < `pg_config --sharedir`/contrib/count_distinct--1.3.1.sql
+    $ psql dbname < `pg_config --sharedir`/contrib/count_distinct--2.0.0.sql
 
 That's all.
 

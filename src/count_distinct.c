@@ -30,8 +30,6 @@ PG_MODULE_MAGIC;
 /* if set to 1, the table resize will be profiled */
 #define DEBUG_PROFILE       0
 
-#if (PG_VERSION_NUM >= 90000)
-
 #define GET_AGG_CONTEXT(fname, fcinfo, aggcontext)  \
     if (! AggCheckCallContext(fcinfo, &aggcontext)) {   \
         elog(ERROR, "%s called in non-aggregate context", fname);  \
@@ -41,28 +39,6 @@ PG_MODULE_MAGIC;
     if (! AggCheckCallContext(fcinfo, NULL)) {   \
         elog(ERROR, "%s called in non-aggregate context", fname);  \
     }
-
-#elif (PG_VERSION_NUM >= 80400)
-
-#define GET_AGG_CONTEXT(fname, fcinfo, aggcontext)  \
-    if (fcinfo->context && IsA(fcinfo->context, AggState)) {  \
-        aggcontext = ((AggState *) fcinfo->context)->aggcontext;  \
-    } else if (fcinfo->context && IsA(fcinfo->context, WindowAggState)) {  \
-        aggcontext = ((WindowAggState *) fcinfo->context)->wincontext;  \
-    } else {  \
-        elog(ERROR, "%s called in non-aggregate context", fname);  \
-        aggcontext = NULL;  \
-    }
-
-#define CHECK_AGG_CONTEXT(fname, fcinfo)  \
-    if (!(fcinfo->context &&  \
-        (IsA(fcinfo->context, AggState) ||  \
-        IsA(fcinfo->context, WindowAggState))))  \
-    {  \
-        elog(ERROR, "%s called in non-aggregate context", fname);  \
-    }
-
-#endif
 
 /* This count_distinct implementation uses a simple, partially sorted array.
  *
@@ -286,7 +262,9 @@ count_distinct_deserial(PG_FUNCTION_ARGS)
 {
     element_set_t *eset = (element_set_t *)palloc(sizeof(element_set_t));
     bytea  *state = (bytea *)PG_GETARG_POINTER(0);
+#ifdef USE_ASSERT_CHECKING
     Size	len = VARSIZE_ANY_EXHDR(state);
+#endif
     char   *ptr = VARDATA(state);
 
     CHECK_AGG_CONTEXT("count_distinct_deserial", fcinfo);
