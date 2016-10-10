@@ -20,6 +20,9 @@ SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('e
 -- bool
 SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,2)::bool)) a FROM generate_series(1,50) s(x))_;
 
+-- bool w/nulls
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(nullif(mod(x,2), 0)::bool)) a FROM generate_series(0,50) s(x))_;
+
 -- int2
 SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::int2)) a FROM generate_series(1,50) s(x))_;
 

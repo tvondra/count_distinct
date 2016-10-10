@@ -5,10 +5,11 @@ amounts of data often ends in sorting and poor performance.
 
 Functions
 ---------
-There's a single polymorphic aggregate function, handling all fixed length
+There are two single polymorphic aggregate functions, handling all fixed length
 data types passed by value (i.e. up to 8B values on 64-bit machines):
 
 * count_distinct(p_value anyelement)
+* array_agg_distinct(p_value anyelement)
 
 Extending the same approach to other data types (varlena or passed by
 reference) should be rather straight-forward and I'll do that eventually.
