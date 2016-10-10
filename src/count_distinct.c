@@ -427,10 +427,14 @@ compact_set(element_set_t * eset, bool need_space)
          * blocks may happen before ALLOCSET_SEPARATE_THRESHOLD. This limit
          * is simply global guarantee for all possible AllocSets.
          */
+#ifdef ALLOCSET_SEPARATE_THRESHOLD
         if ((eset->nbytes / 0.8) < ALLOCSET_SEPARATE_THRESHOLD)
             eset->nbytes *= 2;
         else
             eset->nbytes /= 0.8;
+#else
+        eset->nbytes *= 2;
+#endif
 
         eset->data = repalloc(eset->data, eset->nbytes);
     }
