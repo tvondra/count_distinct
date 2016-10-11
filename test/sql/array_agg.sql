@@ -22,4 +22,10 @@ SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(nullif(mod
 -- int2
 SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::int2)) a FROM test_data_1_50)_;
 
+-- array_agg_elements: nulls only
+SELECT array_agg_distinct_elements(array[null::int2]) a FROM generate_series(1, 10) x;
+
+-- array_agg_elements: nulls and non-nulls
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct_elements(array[x::int2, null, -x::int2])) a FROM test_data_0_50)_;
+
 ROLLBACK;

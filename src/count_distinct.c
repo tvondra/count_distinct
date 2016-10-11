@@ -136,13 +136,15 @@ PG_FUNCTION_INFO_V1(count_distinct_combine);
 
 /* final functions */
 PG_FUNCTION_INFO_V1(count_distinct);
-PG_FUNCTION_INFO_V1(array_agg_distinct);
+PG_FUNCTION_INFO_V1(array_agg_distinct_type_by_element);
+PG_FUNCTION_INFO_V1(array_agg_distinct_type_by_array);
 
 /* supplementary subroutines */
 static void add_element(element_set_t * eset, char * value);
 static element_set_t *init_set(int item_size, char typalign, MemoryContext ctx);
 static int compare_items(const void * a, const void * b, void * size);
 static void compact_set(element_set_t * eset, bool need_space);
+static Datum build_array(element_set_t * eset, Oid input_type);
 
 #if DEBUG_PROFILE
 static void print_set_stats(element_set_t * eset);
@@ -525,24 +527,45 @@ count_distinct(PG_FUNCTION_ARGS)
 }
 
 Datum
-array_agg_distinct(PG_FUNCTION_ARGS)
+array_agg_distinct_type_by_element(PG_FUNCTION_ARGS)
 {
-    element_set_t * eset;
-    Datum * array_of_datums;
-    int i;
-
-    /* type information for the dummy second parameter (anyelement item) */
-    Oid         element_type;
-    int16       typlen;
-    bool        typbyval;
-    char        typalign;
+    /* get element type for the dummy second parameter (anynonarray item) */
+    Oid element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
     CHECK_AGG_CONTEXT("count_distinct", fcinfo);
 
+    /* return empty array if the state was not initialized */
     if (PG_ARGISNULL(0))
-        PG_RETURN_NULL();
+        PG_RETURN_DATUM(PointerGetDatum(construct_empty_array(element_type)));
 
-    eset = (element_set_t *)PG_GETARG_POINTER(0);
+    return build_array((element_set_t *)PG_GETARG_POINTER(0), element_type);
+}
+
+Datum
+array_agg_distinct_type_by_array(PG_FUNCTION_ARGS)
+{
+    /* get element type for the dummy second parameter (anyarray item) */
+    Oid input_type = get_fn_expr_argtype(fcinfo->flinfo, 1),
+        element_type = get_element_type(input_type);
+
+    CHECK_AGG_CONTEXT("count_distinct", fcinfo);
+
+    /* return empty array if the state was not initialized */
+    if (PG_ARGISNULL(0))
+        PG_RETURN_DATUM(PointerGetDatum(construct_empty_array(element_type)));
+
+    return build_array((element_set_t *)PG_GETARG_POINTER(0), element_type);
+}
+
+static Datum
+build_array(element_set_t * eset, Oid element_type)
+{
+    Datum * array_of_datums;
+    int i;
+
+    int16       typlen;
+    bool        typbyval;
+    char        typalign;
 
     /* do the compaction */
     compact_set(eset, false);
@@ -551,8 +574,7 @@ array_agg_distinct(PG_FUNCTION_ARGS)
     print_set_stats(eset);
 #endif
     
-    /* get type information for the dummy second parameter (anyelement item) */
-    element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    /* get detailed type information on the element type */
     get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
 
     /* Copy data from compact array to array of Datums
@@ -561,7 +583,7 @@ array_agg_distinct(PG_FUNCTION_ARGS)
     array_of_datums = palloc0(eset->nsorted * sizeof(Datum));
     for (i = 0; i < eset->nsorted; i++)
         memcpy(array_of_datums + i, eset->data + (eset->item_size * i), eset->item_size);
-        
+
     /* build and return the array */
     PG_RETURN_DATUM(PointerGetDatum(construct_array(
         array_of_datums, eset->nsorted, element_type, typlen, typbyval, typalign
@@ -587,7 +609,6 @@ compact_set(element_set_t * eset, bool need_space)
     int        cnt = 1;
     double    free_fract;
 
-    Assert(eset->nsorted + eset->nall > 0);
     Assert(eset->data != NULL);
     Assert(eset->nsorted <= eset->nall);
     Assert(eset->nall * eset->item_size <= eset->nbytes);

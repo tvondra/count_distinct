@@ -17,7 +17,12 @@ CREATE OR REPLACE FUNCTION count_distinct(internal)
 
 CREATE OR REPLACE FUNCTION array_agg_distinct(internal, anynonarray)
     RETURNS anyarray
-    AS 'count_distinct', 'array_agg_distinct'
+    AS 'count_distinct', 'array_agg_distinct_type_by_element'
+    LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION array_agg_distinct(internal, anyarray)
+    RETURNS anyarray
+    AS 'count_distinct', 'array_agg_distinct_type_by_array'
     LANGUAGE C IMMUTABLE;
 
 DO $$
@@ -80,6 +85,17 @@ BEGIN
                      DESERIALFUNC = count_distinct_deserial,
                      PARALLEL = SAFE
               );
+
+              CREATE AGGREGATE array_agg_distinct_elements(anyarray) (
+                     SFUNC = count_distinct_elements_append,
+                     STYPE = internal,
+                     FINALFUNC = array_agg_distinct,
+                     FINALFUNC_EXTRA,
+                     COMBINEFUNC = count_distinct_combine,
+                     SERIALFUNC = count_distinct_serial,
+                     DESERIALFUNC = count_distinct_deserial,
+                     PARALLEL = SAFE
+              );
        ELSE
               /* Server does not support parallel aggregation (pre-9.6) */
 
@@ -101,6 +117,13 @@ BEGIN
                      SFUNC = count_distinct_elements_append,
                      STYPE = internal,
                      FINALFUNC = count_distinct
+              );
+
+              CREATE AGGREGATE array_agg_distinct_elements(anyarray) (
+                     SFUNC = count_distinct_elements_append,
+                     STYPE = internal,
+                     FINALFUNC = array_agg_distinct,
+                     FINALFUNC_EXTRA
               );
        END IF;
 END;
