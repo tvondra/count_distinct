@@ -70,6 +70,16 @@ BEGIN
                      DESERIALFUNC = count_distinct_deserial,
                      PARALLEL = SAFE
               );
+
+              CREATE AGGREGATE count_distinct_elements(anyarray) (
+                     SFUNC = count_distinct_elements_append,
+                     STYPE = internal,
+                     FINALFUNC = count_distinct,
+                     COMBINEFUNC = count_distinct_combine,
+                     SERIALFUNC = count_distinct_serial,
+                     DESERIALFUNC = count_distinct_deserial,
+                     PARALLEL = SAFE
+              );
        ELSE
               /* Server does not support parallel aggregation (pre-9.6) */
 
@@ -86,12 +96,13 @@ BEGIN
                      FINALFUNC = array_agg_distinct,
                      FINALFUNC_EXTRA
               );
+
+              CREATE AGGREGATE count_distinct_elements(anyarray) (
+                     SFUNC = count_distinct_elements_append,
+                     STYPE = internal,
+                     FINALFUNC = count_distinct
+              );
        END IF;
 END;
 $$;
 
-CREATE AGGREGATE count_distinct_elements(anyarray) (
-       SFUNC = count_distinct_elements_append,
-       STYPE = internal,
-       FINALFUNC = count_distinct
-);
