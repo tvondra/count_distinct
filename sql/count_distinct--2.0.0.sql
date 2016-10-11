@@ -30,13 +30,13 @@ BEGIN
               CREATE OR REPLACE FUNCTION count_distinct_serial(p_pointer internal)
                   RETURNS bytea
                   AS 'count_distinct', 'count_distinct_serial'
-                  LANGUAGE C IMMUTABLE;
+                  LANGUAGE C IMMUTABLE STRICT;
 
               /* deserialize data */
               CREATE OR REPLACE FUNCTION count_distinct_deserial(p_value bytea, p_dummy internal)
                   RETURNS internal
                   AS 'count_distinct', 'count_distinct_deserial'
-                  LANGUAGE C IMMUTABLE;
+                  LANGUAGE C IMMUTABLE STRICT;
 
               /* combine data */
               CREATE OR REPLACE FUNCTION count_distinct_combine(p_state_1 internal, p_state_2 internal)

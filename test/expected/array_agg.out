@@ -1,32 +1,32 @@
 \set ECHO none
 -- int
-SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::int)) a FROM generate_series(1,50) s(x))_;
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::int)) a FROM test_data_1_50)_;
                                                                    array_agg                                                                    
 ------------------------------------------------------------------------------------------------------------------------------------------------
  {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50}
 (1 row)
 
-SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,10)::int)) a FROM generate_series(1,50) s(x))_;
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,10)::int)) a FROM test_data_1_50)_;
        array_agg       
 -----------------------
  {0,1,2,3,4,5,6,7,8,9}
 (1 row)
 
 -- bigint
-SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::bigint)) a FROM generate_series(1,50) s(x))_;
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::bigint)) a FROM test_data_1_50)_;
                                                                    array_agg                                                                    
 ------------------------------------------------------------------------------------------------------------------------------------------------
  {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50}
 (1 row)
 
-SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,10)::bigint)) a FROM generate_series(1,50) s(x))_;
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,10)::bigint)) a FROM test_data_1_50)_;
        array_agg       
 -----------------------
  {0,1,2,3,4,5,6,7,8,9}
 (1 row)
 
 -- timestamp
-SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('epoch'::timestamp + (x || ' days')::interval)) a FROM generate_series(1,50) s(x))_;
+SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('epoch'::timestamp + (x || ' days')::interval)) a FROM test_data_1_50)_;
           unnest          
 --------------------------
  Fri Jan 02 00:00:00 1970
@@ -81,7 +81,7 @@ SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('e
  Fri Feb 20 00:00:00 1970
 (50 rows)
 
-SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('epoch'::timestamptz + (x || ' days')::interval)) a FROM generate_series(1,50) s(x))_;
+SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('epoch'::timestamptz + (x || ' days')::interval)) a FROM test_data_1_50)_;
             unnest            
 ------------------------------
  Thu Jan 01 16:00:00 1970 PST
@@ -137,21 +137,21 @@ SELECT unnest(array_agg(a order by a)) FROM (SELECT unnest(array_agg_distinct('e
 (50 rows)
 
 -- bool
-SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,2)::bool)) a FROM generate_series(1,50) s(x))_;
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(mod(x,2)::bool)) a FROM test_data_1_50)_;
  array_agg 
 -----------
  {f,t}
 (1 row)
 
 -- bool w/nulls
-SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(nullif(mod(x,2), 0)::bool)) a FROM generate_series(0,50) s(x))_;
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(nullif(mod(x,2), 0)::bool)) a FROM test_data_0_50)_;
  array_agg 
 -----------
  {t}
 (1 row)
 
 -- int2
-SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::int2)) a FROM generate_series(1,50) s(x))_;
+SELECT array_agg(a order by a) FROM (SELECT unnest(array_agg_distinct(x::int2)) a FROM test_data_1_50)_;
                                                                    array_agg                                                                    
 ------------------------------------------------------------------------------------------------------------------------------------------------
  {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50}

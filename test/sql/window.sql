@@ -1,14 +1,10 @@
 \set ECHO none
-BEGIN;
+\i test/sql/setup/setup.sql
 
-\i sql/count_distinct--2.0.0.sql
+select count_distinct(x) over (order by x rows between unbounded preceding and current row)
+  from test_data_1_20;
 
-\set ECHO all
-
-select count_distinct(a) over (order by a rows between unbounded preceding and current row)
-  from generate_series(1, 20) a;
-
-select count_distinct(a) over (order by a rows between 10 preceding and 10 following)
-  from generate_series(1, 25) a;
+select count_distinct(x) over (order by x rows between 10 preceding and 10 following)
+  from test_data_1_25;
 
 ROLLBACK;

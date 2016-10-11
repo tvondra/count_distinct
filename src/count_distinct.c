@@ -259,7 +259,7 @@ count_distinct_deserial(PG_FUNCTION_ARGS)
 #ifdef USE_ASSERT_CHECKING
     Size	len = VARSIZE_ANY_EXHDR(state);
 #endif
-    char   *ptr = VARDATA(state);
+    char   *ptr = VARDATA_ANY(state);
 
     CHECK_AGG_CONTEXT("count_distinct_deserial", fcinfo);
 
@@ -399,11 +399,12 @@ count_distinct_combine(PG_FUNCTION_ARGS)
     /* we might have eliminated some duplicate elements */
     Assert((tmp - data) <= ((eset1->nall + eset2->nall) * eset1->item_size));
 
-	pfree(eset1->data);
+    pfree(eset1->data);
     eset1->data = data;
 
     /* and finally compute the current number of elements */
-    eset1->nall = (tmp - data) / eset1->item_size;
+    eset1->nbytes = tmp - data;
+    eset1->nall = eset1->nbytes / eset1->item_size;
     eset1->nsorted = eset1->nall;
 
     PG_RETURN_POINTER(eset1);
