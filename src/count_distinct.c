@@ -127,14 +127,6 @@ PG_FUNCTION_INFO_V1(count_distinct_serial);
 PG_FUNCTION_INFO_V1(count_distinct_deserial);
 PG_FUNCTION_INFO_V1(count_distinct_combine);
 
-Datum count_distinct_append(PG_FUNCTION_ARGS);
-Datum count_distinct(PG_FUNCTION_ARGS);
-Datum array_agg_distinct(PG_FUNCTION_ARGS);
-
-Datum count_distinct_serial(PG_FUNCTION_ARGS);
-Datum count_distinct_deserial(PG_FUNCTION_ARGS);
-Datum count_distinct_combine(PG_FUNCTION_ARGS);
-
 static void add_element(element_set_t * eset, char * value);
 static element_set_t *init_set(int item_size, MemoryContext ctx);
 static int compare_items(const void * a, const void * b, void * size);
