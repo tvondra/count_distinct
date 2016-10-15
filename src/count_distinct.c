@@ -210,7 +210,7 @@ Datum
 count_distinct_elements_append(PG_FUNCTION_ARGS)
 {
     int             i;
-    element_set_t  *eset;
+    element_set_t  *eset = NULL;
 
     /* info for anyarray */
     Oid input_type;
@@ -265,31 +265,34 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
 
     oldcontext = MemoryContextSwitchTo(aggcontext);
 
-    /* init the hash table, if needed */
-    if (PG_ARGISNULL(0))
-    {
-        int16       typlen;
-        bool        typbyval;
-        char        typalign;
-
-        /* get type information for the second parameter (anyelement item) */
-        get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
-
-        /* we can't handle varlena types yet or values passed by reference */
-        if ((typlen < 0) || (! typbyval))
-            elog(ERROR, "count_distinct_elements handles only arrays of fixed-length types passed by value");
-
-        eset = init_set(typlen, typalign, aggcontext);
-    }
-    else
-        eset = (element_set_t *)PG_GETARG_POINTER(0);
-
     /* add all array elements to the set */
     for (i = 0; i < nitems; i++)
     {
         /* ignore nulls */
         if (null_bitmap && !(null_bitmap[i / 8] & (1 << (i % 8))))
             continue;
+
+        /* init the hash table, if needed */
+        if (eset == NULL)
+        {
+            if (PG_ARGISNULL(0))
+            {
+                int16       typlen;
+                bool        typbyval;
+                char        typalign;
+
+                /* get type information for the second parameter (anyelement item) */
+                get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
+
+                /* we can't handle varlena types yet or values passed by reference */
+                if ((typlen < 0) || (! typbyval))
+                    elog(ERROR, "count_distinct_elements handles only arrays of fixed-length types passed by value");
+
+                eset = init_set(typlen, typalign, aggcontext);
+            }
+            else
+                eset = (element_set_t *)PG_GETARG_POINTER(0);
+        }
 
         element = fetch_att(arr_ptr, true, eset->item_size);
 
@@ -302,7 +305,10 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
 
     MemoryContextSwitchTo(oldcontext);
 
-    PG_RETURN_POINTER(eset);
+    if (eset == NULL)
+        PG_RETURN_NULL();
+    else
+        PG_RETURN_POINTER(eset);
 }
 
 Datum
@@ -607,6 +613,7 @@ compact_set(element_set_t * eset, bool need_space)
     int        cnt = 1;
     double    free_fract;
 
+    Assert(eset->nall > 0);
     Assert(eset->data != NULL);
     Assert(eset->nsorted <= eset->nall);
     Assert(eset->nall * eset->item_size <= eset->nbytes);

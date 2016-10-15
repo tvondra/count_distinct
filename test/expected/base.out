@@ -130,7 +130,7 @@ SELECT count_distinct_elements(z) FROM (
 ) foo;
  count_distinct_elements 
 -------------------------
-                       0
+                        
 (1 row)
 
 SELECT count_distinct_elements(z) FROM (
