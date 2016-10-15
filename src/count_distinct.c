@@ -252,8 +252,6 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
 
     /*
      * parse the array contents (we know we got non-NULL value)
-     *
-     * XXX Should this handle arrays with multiple dimensions?
      */
     input = PG_GETARG_ARRAYTYPE_P(1);
     ndims = ARR_NDIM(input);
