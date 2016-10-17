@@ -2,7 +2,7 @@
    "name": "count_distinct",
    "abstract": "Aggregate for computing number of distinct values using a sorted set.",
    "description": "The regular COUNT(DISTINCT ...) always performs a regular sort internally, which results in bad performance if there's a lot of duplicate values. This extension implements custom count_distinct aggregate function that uses an optimized sorted set to achieve the same purpose. The extension currently supports only data types passed by value",
-   "version": "2.0.0",
+   "version": "3.0.0",
    "maintainer": [
       "Tomas Vondra <tv@fuzzy.cz>",
       "Alexey Bashtanov <bashtanov@imap.cc>"
@@ -11,15 +11,15 @@
    "prereqs": {
       "runtime": {
          "requires": {
-            "PostgreSQL": "9.4.0"
+            "PostgreSQL": "9.6.0"
          }
       }
    },
    "provides": {
      "count_distinct": {
-       "file": "sql/count_distinct--2.0.0.sql",
+       "file": "sql/count_distinct--3.0.0.sql",
        "docfile" : "README.md",
-       "version": "2.0.0"
+       "version": "3.0.0"
      }
    },
    "resources": {
@@ -34,5 +34,5 @@
       "version": "1.0.0",
       "url": "http://pgxn.org/meta/spec.txt"
    },
-   "release_status" : "stable"
+   "release_status" : "testing"
 }
