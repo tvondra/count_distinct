@@ -9,7 +9,12 @@ There are two single polymorphic aggregate functions, handling all fixed length
 data types passed by value (i.e. up to 8B values on 64-bit machines):
 
 * count_distinct(p_value anyelement)
-* array_agg_distinct(p_value anyelement)
+* array_agg_distinct(p_value anyelement).
+
+Two more functions accept arrays of the same types:
+
+* count_distinct_elements(p_value anyarray)
+* array_agg_distinct_elements(p_value anyarray).
 
 Extending the same approach to other data types (varlena or passed by
 reference) should be rather straight-forward and I'll do that eventually.
@@ -97,6 +102,16 @@ your breath - it won't happen before 9.5).
 So in short - if you're dealing with a lot of distinct values, you need
 a lot of RAM in the machine.
 
+Versions
+--------
+* 1.3.x (branch REL1_3_STABLE) is legacy and supports PostgreSQL 8.4+,
+only `count_distinct` aggregate function is provided.
+* 2.0.x (branch REL2_0_STABLE) works on PostgreSQL 9.4+ and, in addition to `count_distinct`,
+provides the following aggregate functions:
+    * `count_distinct_elements` (for counting distinct elements in arrays)
+    * `array_agg_distinct` (for aggregating distinct elements into an array)
+    * `array_agg_distinct_elements` (for aggregating distinct elements of arrays into a single array)
+* 3.0.x (master) requires PostgreSQL 9.6+ and supports parallel aggregation.
 
 Installation
 ------------
