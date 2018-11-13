@@ -23,8 +23,9 @@ analyze test_data_0_1000;
 do $$
 declare
     t text;
+    cfg text = case when current_setting('server_version_num')::int >= 100000 then 'min_parallel_table_scan_size' else 'min_parallel_relation_size' end;
 begin
-    perform set_config('min_parallel_relation_size', '0', true),
+    perform set_config(cfg, '0', true),
             set_config('parallel_setup_cost', '0', true),
             set_config('parallel_tuple_cost', '0', true),
             set_config('max_parallel_workers_per_gather', '22', true);
