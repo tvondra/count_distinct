@@ -12,16 +12,10 @@
 #include <limits.h>
 
 #include "postgres.h"
-#include "utils/datum.h"
 #include "utils/array.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
-#include "utils/numeric.h"
-#include "utils/builtins.h"
-#include "catalog/pg_type.h"
-#include "nodes/execnodes.h"
 #include "access/tupmacs.h"
-#include "utils/pg_crc.h"
 
 PG_MODULE_MAGIC;
 
@@ -101,11 +95,12 @@ typedef struct element_set_t
 	MemoryContext	aggctx;
 
 	Size	nbytes;		/* size of the data array (number of bytes) */
-	uint32	item_size;	/* length of items (depends on data type) */
 	uint32	nsorted;	/* number of items in the sorted part */
 	uint32	nall;		/* number of all items (sorted + unsorted) */
 
 	/* used for arrays only (cache for get_typlenbyvalalign results) */
+	int16	typlen;
+	bool	typbyval;
 	char	typalign;
 
 	/* array of elements */
@@ -143,7 +138,9 @@ PG_FUNCTION_INFO_V1(array_agg_distinct_type_by_array);
 
 /* supplementary subroutines */
 static void add_element(element_set_t *eset, char *value);
-static element_set_t *init_set(int item_size, char typalign, MemoryContext ctx);
+static element_set_t *init_set(int16 typlen, bool typbyval, char typalign, MemoryContext ctx);
+static element_set_t *copy_set(element_set_t *eset);
+
 static int compare_items(const void *a, const void *b, void *size);
 static void compact_set(element_set_t *eset, bool need_space);
 static Datum build_array(element_set_t *eset, Oid input_type);
@@ -192,7 +189,7 @@ count_distinct_append(PG_FUNCTION_ARGS)
 		if ((typlen < 0) || (! typbyval))
 			elog(ERROR, "count_distinct handles only fixed-length types passed by value");
 
-		eset = init_set(typlen, typalign, aggcontext);
+		eset = init_set(typlen, typbyval, typalign, aggcontext);
 	} else
 		eset = (element_set_t *) PG_GETARG_POINTER(0);
 
@@ -216,12 +213,14 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
 
 	/* array data */
 	ArrayType  *input;
-	int			ndims;
-	int		   *dims;
-	int			nitems;
-	bits8	   *null_bitmap;
-	char	   *arr_ptr;
-	Datum		element;
+	Datum	   *elements;
+	bool	   *nulls;
+	int			nelements;
+
+	/* needed for array deconstruction */
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
 
 	/* memory contexts */
 	MemoryContext	oldcontext;
@@ -248,65 +247,74 @@ count_distinct_elements_append(PG_FUNCTION_ARGS)
 	input_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 	element_type = get_element_type(input_type);
 
-	/*
-	 * parse the array contents (we know we got non-NULL value)
-	 */
-	input = PG_GETARG_ARRAYTYPE_P(1);
-	ndims = ARR_NDIM(input);
-	dims = ARR_DIMS(input);
-	nitems = ArrayGetNItems(ndims, dims);
-	null_bitmap = ARR_NULLBITMAP(input);
-	arr_ptr = ARR_DATA_PTR(input);
-
 	/* make sure we're running as part of aggregate function */
 	GET_AGG_CONTEXT("count_distinct_elements_append", fcinfo, aggcontext);
 
 	oldcontext = MemoryContextSwitchTo(aggcontext);
 
-	/* add all array elements to the set */
-	for (i = 0; i < nitems; i++)
+	/* get existing state, if any (otherwise leave it NULL) */
+	if (!PG_ARGISNULL(0))
+		eset = (element_set_t *) PG_GETARG_POINTER(0);
+
+	/* parse the array contents (we know we got non-NULL value) */
+	input = PG_GETARG_ARRAYTYPE_P(1);
+
+	/*
+	 * get type information for the second parameter (anyelement item), from
+	 * the existing state or from cache.
+	 */
+	if (eset)
 	{
+		typlen = eset->typlen;
+		typbyval = eset->typbyval;
+		typalign = eset->typalign;
+	}
+	else
+		get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
+
+	/* we can't handle varlena types yet or values passed by reference */
+	if ((typlen < 0) || (! typbyval))
+		elog(ERROR, "count_distinct handles only fixed-length types passed by value");
+
+	deconstruct_array(input,
+					  element_type, typlen, typbyval, typalign,
+					  &elements, &nulls, &nelements);
+
+	/* add all non-NULL array elements to the set */
+	for (i = 0; i < nelements; i++)
+	{
+		Datum	value;
+
 		/* ignore nulls */
-		if (null_bitmap && !(null_bitmap[i / 8] & (1 << (i % 8))))
+		if (nulls[i])
 			continue;
 
 		/* init the hash table, if needed */
-		if (eset == NULL)
-		{
-			if (PG_ARGISNULL(0))
-			{
-				int16	   typlen;
-				bool		typbyval;
-				char		typalign;
+		if (!eset)
+			eset = init_set(typlen, typbyval, typalign, aggcontext);
 
-				/* get type information for the second parameter (anyelement item) */
-				get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
+		/*
+		 * We need to copy just the significant bytes - we can't use memcpy
+		 * directly, as that assumes little endian behavior.  store_att_byval
+		 * does almost what we need, but it requires properly aligned buffer.
+		 * We simply use a local Datum variable (which does guarante proper
+		 * alignment), and then copy the value from it.
+		 */
+		store_att_byval(&value, elements[i], eset->typlen);
 
-				/* we can't handle varlena types yet or values passed by reference */
-				if ((typlen < 0) || (! typbyval))
-					elog(ERROR, "count_distinct_elements handles only arrays of fixed-length types passed by value");
-
-				eset = init_set(typlen, typalign, aggcontext);
-			}
-			else
-				eset = (element_set_t *) PG_GETARG_POINTER(0);
-		}
-
-		element = fetch_att(arr_ptr, true, eset->item_size);
-
-		add_element(eset, (char*)&element);
-
-		/* advance array pointer */
-		arr_ptr = att_addlength_pointer(arr_ptr, eset->item_size, arr_ptr);
-		arr_ptr = (char *) att_align_nominal(arr_ptr, eset->typalign);
+		add_element(eset, (char *) &value);
 	}
 
 	MemoryContextSwitchTo(oldcontext);
 
+	/* free arrays allocated by deconstruct_array */
+	pfree(elements);
+	pfree(nulls);
+
 	if (eset == NULL)
 		PG_RETURN_NULL();
-	else
-		PG_RETURN_POINTER(eset);
+
+	PG_RETURN_POINTER(eset);
 }
 
 Datum
@@ -332,7 +340,7 @@ count_distinct_serial(PG_FUNCTION_ARGS)
 	Assert(eset->nall > 0);
 	Assert(eset->nall == eset->nsorted);
 
-	dlen = eset->nall * eset->item_size;
+	dlen = eset->nall * eset->typlen;
 
 	out = (bytea *) palloc(VARHDRSZ + dlen + hlen);
 
@@ -365,13 +373,13 @@ count_distinct_deserial(PG_FUNCTION_ARGS)
 	ptr += offsetof(element_set_t, data);
 
 	Assert((eset->nall > 0) && (eset->nall == eset->nsorted));
-	Assert(len == offsetof(element_set_t, data) + eset->nall * eset->item_size);
+	Assert(len == offsetof(element_set_t, data) + eset->nall * eset->typlen);
 
 	/* we only allocate the necessary space */
-	eset->data = palloc(eset->nall * eset->item_size);
-	eset->nbytes = eset->nall * eset->item_size;
+	eset->data = palloc(eset->nall * eset->typlen);
+	eset->nbytes = eset->nall * eset->typlen;
 
-	memcpy((void *)eset->data, ptr, eset->nall * eset->item_size);
+	memcpy((void *) eset->data, ptr, eset->nall * eset->typlen);
 
 	PG_RETURN_POINTER(eset);
 }
@@ -402,15 +410,7 @@ count_distinct_combine(PG_FUNCTION_ARGS)
 	{
 		old_context = MemoryContextSwitchTo(agg_context);
 
-		eset1 = (element_set_t *) palloc(sizeof(element_set_t));
-		eset1->item_size = eset2->item_size;
-		eset1->nsorted = eset2->nsorted;
-		eset1->nall = eset2->nall;
-		eset1->nbytes = eset2->nbytes;
-
-		eset1->data = palloc(eset1->nbytes);
-
-		memcpy(eset1->data, eset2->data, eset1->nbytes);
+		eset1 = copy_set(eset2);
 
 		MemoryContextSwitchTo(old_context);
 
@@ -418,7 +418,7 @@ count_distinct_combine(PG_FUNCTION_ARGS)
 	}
 
 	Assert((eset1 != NULL) && (eset2 != NULL));
-	Assert((eset1->item_size > 0) && (eset1->item_size == eset2->item_size));
+	Assert((eset1->typlen > 0) && (eset1->typlen == eset2->typlen));
 
 	/* make sure both states are sorted */
 	compact_set(eset1, false);
@@ -442,26 +442,26 @@ count_distinct_combine(PG_FUNCTION_ARGS)
 		if ((ptr1 < (eset1->data + eset1->nbytes)) &&
 			(ptr2 < (eset2->data + eset2->nbytes)))
 		{
-			if (memcmp(ptr1, ptr2, eset1->item_size) <= 0)
+			if (memcmp(ptr1, ptr2, eset1->typlen) <= 0)
 			{
 				element = ptr1;
-				ptr1 += eset1->item_size;
+				ptr1 += eset1->typlen;
 			}
 			else
 			{
 				element = ptr2;
-				ptr2 += eset1->item_size;
+				ptr2 += eset1->typlen;
 			}
 		}
 		else if (ptr1 < (eset1->data + eset1->nbytes))
 		{
 			element = ptr1;
-			ptr1 += eset1->item_size;
+			ptr1 += eset1->typlen;
 		}
 		else if (ptr2 < (eset2->data + eset2->nbytes))
 		{
 			element = ptr2;
-			ptr2 += eset2->item_size;
+			ptr2 += eset2->typlen;
 		}
 		else
 			elog(ERROR, "unexpected");
@@ -474,35 +474,35 @@ count_distinct_combine(PG_FUNCTION_ARGS)
 		if (tmp == data)
 		{
 			/* first value, so just copy */
-			memcpy(tmp, element, eset1->item_size);
+			memcpy(tmp, element, eset1->typlen);
 			prev = tmp;
-			tmp += eset1->item_size;
+			tmp += eset1->typlen;
 		}
-		else if (memcmp(prev, element, eset1->item_size) != 0)
+		else if (memcmp(prev, element, eset1->typlen) != 0)
 		{
 			/* not equal to the last one, so should be greater */
-			Assert(memcmp(prev, element, eset1->item_size) < 0);
+			Assert(memcmp(prev, element, eset1->typlen) < 0);
 
 			/* first value, so just copy */
-			memcpy(tmp, element, eset1->item_size);
+			memcpy(tmp, element, eset1->typlen);
 			prev = tmp;
-			tmp += eset1->item_size;
+			tmp += eset1->typlen;
 		}
 	}
 
 	/* we must have processed the input arrays completely */
-	Assert(ptr1 == (eset1->data + (eset1->nall * eset1->item_size)));
-	Assert(ptr2 == (eset2->data + (eset2->nall * eset2->item_size)));
+	Assert(ptr1 == (eset1->data + (eset1->nall * eset1->typlen)));
+	Assert(ptr2 == (eset2->data + (eset2->nall * eset2->typlen)));
 
 	/* we might have eliminated some duplicate elements */
-	Assert((tmp - data) <= ((eset1->nall + eset2->nall) * eset1->item_size));
+	Assert((tmp - data) <= ((eset1->nall + eset2->nall) * eset1->typlen));
 
 	pfree(eset1->data);
 	eset1->data = data;
 
 	/* and finally compute the current number of elements */
 	eset1->nbytes = tmp - data;
-	eset1->nall = eset1->nbytes / eset1->item_size;
+	eset1->nall = eset1->nbytes / eset1->typlen;
 	eset1->nsorted = eset1->nall;
 
 	PG_RETURN_POINTER(eset1);
@@ -573,26 +573,23 @@ build_array(element_set_t *eset, Oid element_type)
 	ArrayType   *array;
 	int i;
 
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-
 	/* do the compaction */
 	compact_set(eset, false);
 
-	/* get detailed type information on the element type */
-	get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
-
-	/* Copy data from compact array to array of Datums
-	 * A bit suboptimal way, spends excessive memory
+	/*
+	 * Copy data from compact array to array of Datums
+	 * A bit suboptimal way, spends excessive memory.
 	 */
 	array_of_datums = palloc0(eset->nsorted * sizeof(Datum));
 	for (i = 0; i < eset->nsorted; i++)
-		memcpy(array_of_datums + i, eset->data + (eset->item_size * i), eset->item_size);
+		memcpy(array_of_datums + i, eset->data + (eset->typlen * i), eset->typlen);
 
-    /* build and return the array */
-    array = construct_array(array_of_datums, eset->nsorted,
-							element_type, typlen, typbyval, typalign);
+	/* build and return the array */
+	array = construct_array(array_of_datums, eset->nsorted, element_type,
+							eset->typlen, eset->typbyval, eset->typalign);
+
+	/* free the array (not needed anymore) */
+	pfree(array_of_datums);
 
 	return PointerGetDatum(array);
 }
@@ -609,7 +606,7 @@ build_array(element_set_t *eset, Oid element_type)
 static void
 compact_set(element_set_t *eset, bool need_space)
 {
-	char   *base = eset->data + (eset->nsorted * eset->item_size);
+	char   *base = eset->data + (eset->nsorted * eset->typlen);
 	char   *last = base;
 	char   *curr;
 	int		i;
@@ -619,7 +616,7 @@ compact_set(element_set_t *eset, bool need_space)
 	Assert(eset->nall > 0);
 	Assert(eset->data != NULL);
 	Assert(eset->nsorted <= eset->nall);
-	Assert(eset->nall * eset->item_size <= eset->nbytes);
+	Assert(eset->nall * eset->typlen <= eset->nbytes);
 
 	/* if there are no new (unsorted) items, we don't need to sort */
 	if (eset->nall > eset->nsorted)
@@ -630,9 +627,9 @@ compact_set(element_set_t *eset, bool need_space)
 		 * TODO Consider replacing this insert-sort for small number of items
 		 * (for <64 items it might be faster than qsort)
 		 */
-		qsort_arg(eset->data + eset->nsorted * eset->item_size,
-				  eset->nall - eset->nsorted, eset->item_size,
-				  compare_items, &eset->item_size);
+		qsort_arg(eset->data + eset->nsorted * eset->typlen,
+				  eset->nall - eset->nsorted, eset->typlen,
+				  compare_items, &eset->typlen);
 
 		/*
 		 * Remove duplicate values from the sorted array. That is - walk through
@@ -642,17 +639,17 @@ compact_set(element_set_t *eset, bool need_space)
 		 */
 		for (i = 1; i < eset->nall - eset->nsorted; i++)
 		{
-			curr = base + (i * eset->item_size);
+			curr = base + (i * eset->typlen);
 
 			/* items differ (keep the item) */
-			if (memcmp(last, curr, eset->item_size) != 0)
+			if (memcmp(last, curr, eset->typlen) != 0)
 			{
-				last += eset->item_size;
+				last += eset->typlen;
 				cnt  += 1;
 
 				/* only copy if really needed */
 				if (last != curr)
-					memcpy(last, curr, eset->item_size);
+					memcpy(last, curr, eset->typlen);
 			}
 		}
 
@@ -684,11 +681,11 @@ compact_set(element_set_t *eset, bool need_space)
 
 			/* already sorted array */
 			char * a = eset->data;
-			char * a_max = eset->data + eset->nsorted * eset->item_size;
+			char * a_max = eset->data + eset->nsorted * eset->typlen;
 
 			/* the new array */
-			char * b = eset->data + (eset->nsorted * eset->item_size);
-			char * b_max = eset->data + eset->nall * eset->item_size;
+			char * b = eset->data + (eset->nsorted * eset->typlen);
+			char * b_max = eset->data + eset->nall * eset->typlen;
 
 			MemoryContextSwitchTo(oldctx);
 
@@ -704,7 +701,7 @@ compact_set(element_set_t *eset, bool need_space)
 
 			while (true)
 			{
-				int r = memcmp(a, b, eset->item_size);
+				int r = memcmp(a, b, eset->typlen);
 
 				/*
 				 * If both values are the same, copy one of them into the result and increment
@@ -712,22 +709,22 @@ compact_set(element_set_t *eset, bool need_space)
 				 */
 				if (r == 0)
 				{
-					memcpy(ptr, a, eset->item_size);
-					a += eset->item_size;
-					b += eset->item_size;
+					memcpy(ptr, a, eset->typlen);
+					a += eset->typlen;
+					b += eset->typlen;
 				}
 				else if (r < 0)
 				{
-					memcpy(ptr, a, eset->item_size);
-					a += eset->item_size;
+					memcpy(ptr, a, eset->typlen);
+					a += eset->typlen;
 				}
 				else
 				{
-					memcpy(ptr, b, eset->item_size);
-					b += eset->item_size;
+					memcpy(ptr, b, eset->typlen);
+					b += eset->typlen;
 				}
 
-				ptr += eset->item_size;
+				ptr += eset->typlen;
 
 				/*
 				 * If we reached the end of (at least) one of the arrays, copy all
@@ -750,13 +747,13 @@ compact_set(element_set_t *eset, bool need_space)
 				}
 			}
 
-			Assert((ptr - data) <= (eset->nall * eset->item_size));
+			Assert((ptr - data) <= (eset->nall * eset->typlen));
 
 			/*
 			 * Update the counts with the result of the merge (there might be
 			 * duplicities between the two parts, and we have eliminated them).
 			 */
-			eset->nsorted = (ptr - data) / eset->item_size;
+			eset->nsorted = (ptr - data) / eset->typlen;
 			eset->nall = eset->nsorted;
 			pfree(eset->data);
 			eset->data = data;
@@ -767,7 +764,7 @@ compact_set(element_set_t *eset, bool need_space)
 
 	/* compute free space as a fraction of the total size */
 	free_fract
-		= (eset->nbytes - eset->nall * eset->item_size) * 1.0 / eset->nbytes;
+		= (eset->nbytes - eset->nall * eset->typlen) * 1.0 / eset->nbytes;
 
 	/*
 	 * If we need space for more items (e.g. not when finalizing the aggregate
@@ -799,7 +796,7 @@ compact_set(element_set_t *eset, bool need_space)
 
 #if DEBUG_PROFILE
 	elog(WARNING, "compact_set: bytes=%lu item=%d all=%d sorted=%d",
-				  eset->nbytes, eset->item_size, eset->nall, eset->nsorted);
+				  eset->nbytes, eset->typlen, eset->nall, eset->nsorted);
 #endif
 }
 
@@ -810,24 +807,25 @@ add_element(element_set_t *eset, char *value)
 	 * If there's not enough space for another item, perform compaction
 	 * (this also allocates enough free space for new entries).
 	 */
-	if (eset->item_size * (eset->nall + 1) > eset->nbytes)
+	if (eset->typlen * (eset->nall + 1) > eset->nbytes)
 		compact_set(eset, true);
 
 	/* there needs to be space for at least one more value (thanks to the compaction) */
-	Assert(eset->nbytes >= eset->item_size * (eset->nall + 1));
+	Assert(eset->nbytes >= eset->typlen * (eset->nall + 1));
 
 	/* now we're sure there's enough space */
-	memcpy(eset->data + (eset->item_size * eset->nall), value, eset->item_size);
+	memcpy(eset->data + (eset->typlen * eset->nall), value, eset->typlen);
 	eset->nall += 1;
 }
 
 /* XXX make sure the whole method is called within the aggregate context */
 static element_set_t *
-init_set(int item_size, char typalign, MemoryContext ctx)
+init_set(int16 typlen, bool typbyval, char typalign, MemoryContext ctx)
 {
 	element_set_t * eset = (element_set_t *) palloc(sizeof(element_set_t));
 
-	eset->item_size = item_size;
+	eset->typlen = typlen;
+	eset->typbyval = typbyval;
 	eset->typalign = typalign;
 	eset->nsorted = 0;
 	eset->nall = 0;
@@ -837,6 +835,26 @@ init_set(int item_size, char typalign, MemoryContext ctx)
 	eset->data = palloc(eset->nbytes);
 
 	return eset;
+}
+
+static element_set_t *
+copy_set(element_set_t *eset)
+{
+	element_set_t *copy;
+
+	copy = (element_set_t *) palloc(sizeof(element_set_t));
+	copy->typlen = eset->typlen;
+	copy->typalign = eset->typalign;
+	copy->typbyval = eset->typbyval;
+	copy->nsorted = eset->nsorted;
+	copy->nall = eset->nall;
+	copy->nbytes = eset->nbytes;
+
+	copy->data = palloc(eset->nbytes);
+
+	memcpy(copy->data, eset->data, eset->nbytes);
+
+	return copy;
 }
 
 /* just compare the data directly using memcmp */
