@@ -5,22 +5,24 @@ amounts of data often ends in sorting and poor performance.
 
 Functions
 ---------
-There are two single polymorphic aggregate functions, handling all fixed length
+There are two polymorphic aggregate functions, handling fixed length
 data types passed by value (i.e. up to 8B values on 64-bit machines):
 
-* count_distinct(p_value anyelement)
-* array_agg_distinct(p_value anyelement).
+* `count_distinct(p_value anyelement)`
+* `array_agg_distinct(p_value anyelement)`
 
 Two more functions accept arrays of the same types:
 
-* count_distinct_elements(p_value anyarray)
-* array_agg_distinct_elements(p_value anyarray).
+* `count_distinct_elements(p_value anyarray)`
+* `array_agg_distinct_elements(p_value anyarray)`
 
-Extending the same approach to other data types (varlena or passed by
-reference) should be rather straight-forward and I'll do that eventually.
-But it's important to be very careful about memory consumption, as the
-approach keeps everything in RAM and is compatible with HashAggegate).
+and work with the elements of the input array (instead of the array
+value itself).
 
+Extending this approach to other data types (passed by reference) shoul
+be rather straight-forward. But it's important to be very careful about
+memory consumption, as the approach keeps everything in RAM. This issue
+is discussed in more detail in one of the following sections.
 
 Performance
 -----------
