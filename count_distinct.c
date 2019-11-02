@@ -529,9 +529,11 @@ count_distinct(PG_FUNCTION_ARGS)
 Datum
 array_agg_distinct_type_by_element(PG_FUNCTION_ARGS)
 {
+	element_set_t  *eset;
 	Oid				element_type;
 
 	/* get element type for the dummy second parameter (anynonarray item) */
+	eset = (element_set_t *) PG_GETARG_POINTER(0);
 	element_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
 	CHECK_AGG_CONTEXT("count_distinct", fcinfo);
@@ -540,16 +542,18 @@ array_agg_distinct_type_by_element(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 		PG_RETURN_DATUM(PointerGetDatum(construct_empty_array(element_type)));
 
-	return build_array((element_set_t *) PG_GETARG_POINTER(0), element_type);
+	PG_RETURN_DATUM(build_array(eset, element_type));
 }
 
 Datum
 array_agg_distinct_type_by_array(PG_FUNCTION_ARGS)
 {
+	element_set_t  *eset;
 	Oid				input_type;
 	Oid				element_type;
 
 	/* get element type for the dummy second parameter (anyarray item) */
+	eset = (element_set_t *) PG_GETARG_POINTER(0);
 	input_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 	element_type = get_element_type(input_type);
 
@@ -559,13 +563,14 @@ array_agg_distinct_type_by_array(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 		PG_RETURN_DATUM(PointerGetDatum(construct_empty_array(element_type)));
 
-	return build_array((element_set_t *) PG_GETARG_POINTER(0), element_type);
+	PG_RETURN_DATUM(build_array(eset, element_type));
 }
 
 static Datum
 build_array(element_set_t *eset, Oid element_type)
 {
 	Datum		*array_of_datums;
+	ArrayType   *array;
 	int i;
 
 	int16		typlen;
@@ -586,9 +591,10 @@ build_array(element_set_t *eset, Oid element_type)
 		memcpy(array_of_datums + i, eset->data + (eset->item_size * i), eset->item_size);
 
     /* build and return the array */
-	PG_RETURN_DATUM(PointerGetDatum(construct_array(
-		array_of_datums, eset->nsorted, element_type, typlen, typbyval, typalign
-	)));
+    array = construct_array(array_of_datums, eset->nsorted,
+							element_type, typlen, typbyval, typalign);
+
+	return PointerGetDatum(array);
 }
 
 /*
