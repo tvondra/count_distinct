@@ -3,7 +3,7 @@
 BEGIN;
 
 -- install the module
-\i sql/count_distinct--3.0.0.sql
+\i sql/count_distinct--3.0.1.sql
 
 -- create and analyze tables (parallel plans work only on real tables, not on SRFs)
 create table test_data_1_20 as select generate_series(1,20) x;
