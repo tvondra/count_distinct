@@ -26,7 +26,7 @@ is discussed in more detail in one of the following sections.
 
 Performance
 -----------
-So, what's wrong with plain COUNT(DISTINCT ...). Let's use this table
+So, what's wrong with plain `COUNT(DISTINCT ...)`? Let's use this table
 for some tests
 
     CREATE TABLE test_table (id INT, val INT);
@@ -63,6 +63,82 @@ which results in an explain plan like this:
 
 This aggregate function takes ~4.1 seconds and produces exactly the same
 results (but unsorted).
+
+
+Benchmark
+---------
+The `benchmark` directory contains a couple of very simple benchmarking
+scripts. The script `create-tables.sql` creates tables of different size
+that are then used by queries in `bench-native.sql` (which is running
+`COUNT(DISTINCT ...)`) and `bench-count-distinct.sql` (this extension).
+
+An example of results from one particular machine (CPU Intel i5-2500k,
+8GB RAM, SSD) on PostgreSQL 12 is in the following table.
+
+    | scale  | query | native | serial | parallel | serial | parallel |
+    |--------|-------|--------|--------|----------|--------|----------|
+    | small  |     1 |     10 |     27 |       27 |   272% |     272% |
+    |        |     2 |     10 |     27 |       27 |   270% |     270% |
+    |        |     3 |     44 |     33 |       33 |    75% |      75% |
+    |        |     4 |     93 |     60 |       61 |    65% |      66% |
+    |        |     5 |     45 |     29 |       29 |    64% |      64% |
+    |        |     6 |     93 |     60 |       61 |    65% |      66% |
+    |        |     7 |     50 |     47 |       48 |    94% |      95% |
+    |        |     8 |     93 |     60 |       61 |    65% |      65% |
+    |        |     9 |     99 |     65 |       66 |    67% |      67% |
+    |        |    10 |     93 |     60 |       61 |    65% |      65% |
+    |        |    11 |     47 |     49 |       49 |   105% |     105% |
+    |        |    12 |     90 |     68 |       68 |    76% |      76% |
+    |        |    13 |     44 |     46 |       46 |   104% |     104% |
+    |        |    14 |     47 |     49 |       49 |   105% |     105% |
+    |        |    15 |     39 |     27 |       27 |    68% |      69% |
+    |        |    16 |     79 |     58 |       58 |    73% |      74% |
+    |--------|-------|--------|--------|----------|--------|----------|
+    | medium |     1 |   2378 |   3602 |     1341 |   151% |      56% |
+    |        |     2 |   2401 |   3630 |     1325 |   151% |      55% |
+    |        |     3 |   6557 |   4045 |     1524 |    62% |      23% |
+    |        |     4 |  10522 |   7206 |     7406 |    68% |      70% |
+    |        |     5 |   6047 |   3827 |     1456 |    63% |      24% |
+    |        |     6 |  10523 |   7232 |     7362 |    69% |      70% |
+    |        |     7 |   5995 |   6482 |     1832 |   108% |      31% |
+    |        |     8 |  10522 |   7246 |     7369 |    69% |      70% |
+    |        |     9 |  11074 |   7759 |     7761 |    70% |      70% |
+    |        |    10 |  10515 |   7212 |     7281 |    69% |      69% |
+    |        |    11 |   6359 |   6997 |     1963 |   110% |      31% |
+    |        |    12 |  10838 |   8675 |     8661 |    80% |      80% |
+    |        |    13 |   5535 |   5692 |     1459 |   103% |      26% |
+    |        |    14 |   6346 |   6993 |     2020 |   110% |      32% |
+    |        |    15 |   5103 |   5455 |     1446 |   107% |      28% |
+    |        |    16 |   9111 |   6960 |     6975 |    76% |      77% |
+    |--------|-------|--------|--------|----------|--------|----------|
+    | large  |     1 |  33655 |  38990 |    16370 |   116% |      49% |
+    |        |     2 |  33733 |  39244 |    16341 |   116% |      48% |
+    |        |     3 |  85952 |  45148 |    17881 |    53% |      21% |
+    |        |     4 | 118266 |  85194 |    56260 |    72% |      48% |
+    |        |     5 |  81632 |  42123 |    16852 |    52% |      21% |
+    |        |     6 | 118185 |  84921 |    55843 |    72% |      47% |
+    |        |     7 |  76657 |  83903 |    22802 |   109% |      30% |
+    |        |     8 | 118012 |  85217 |    55288 |    72% |      47% |
+    |        |     9 | 124608 |  91788 |    56302 |    74% |      45% |
+    |        |    10 | 118311 |  85219 |    55101 |    72% |      47% |
+    |        |    11 |  83338 |  88766 |    28569 |   107% |      34% |
+    |        |    12 | 124434 | 102602 |    60438 |    82% |      49% |
+    |        |    13 |  71783 |  70960 |    16877 |    99% |      24% |
+    |        |    14 |  82105 |  87466 |    27524 |   107% |      34% |
+    |        |    15 |  63803 |  67240 |    17426 |   105% |      27% |
+    |        |    16 | 103516 |  82305 |    47196 |    80% |      46% |
+
+The scale specifies how large the table is - 100k, 1M or 10M rows. There
+are 16 different queries. The following three columns show timing (in
+miliseconds), median of 6 runs. `native` means `COUNT(DISTINCT ...)`,
+while `serial` and `parallel` means functions from this extention, with
+parallel queries disabled and enabled. The last two columns are simply
+timing compared to `native`.
+
+It's clear that in serial mode `count_distinct` does perform roughly the
+same as `COUNT(DISTINCT ...)` - sometimes it's 2x fast, sometimes a bit
+slower than `native`. The `parallel` case however shows significant and
+consistent improvements.
 
 
 Issues
