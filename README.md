@@ -3,6 +3,60 @@ COUNT_DISTINCT aggregate
 This extension provides an alternative to COUNT(DISTINCT ...) which for large
 amounts of data often ends in sorting and poor performance.
 
+
+Should I use this extension?
+----------------------------
+Answering this question is not entirely easy, and you need to consider a
+couple of things:
+
+* Do you need just `COUNT(DISTINCT ...)` or also `array_agg_distinct()`?
+
+  If you only care about `COUNT(DISTINCT ...)`, then using the built-in
+  stuff from PostgreSQL is an option, and you need to look at the rest
+  of this section. If you need the `array_agg_distinct()` part, then
+  using this extension is probably the right thing to do irrespectedly
+  of the other questions.
+
+* How much data are you dealing with?
+
+  If you're only dealing with small amounts of data (a couple megabytes
+  per group, or so), this extension is unlikely to be much faster than
+  the built-in `COUNT(DISTINCT ...)` and may actually be slower.
+
+* What is the data distribution?
+
+  The main metric you need to look at is number of distinct values vs.
+  number of rows in a group. The higher this value is, the less likely
+  this extension will be a win, compared to `COUNT(DISTINCT ...)`. But
+  if there's a lot of redundancy, the deduplication can save a lot.
+
+* How serious is the OOM risk?
+
+  There's no reasonable way to enforce `work_mem` for user aggregates,
+  both during planning and execution. Depending on the aggregate method
+  picked by planner (sort vs. hash) we may end up keeping all data or
+  the current group in memory. For data sets with many groups and/or
+  large number of distinct values in a group, this may end up by OOM.
+
+  You need to judge how serious the OOM risk is, considering your data
+  set, memory available on the system and workload characteristics (how
+  many queries are running concurrently, etc.).
+
+* Which PostgreSQL release are you using?
+
+  On older PostgreSQL releases (9.x) this extension was almost always a
+  clear win, compared to `COUNT(DISTINCT ...)`. But the performance got
+  much better over time, so if you're using a reasonably recent release
+  (say, 11+), then maybe just try using PostgreSQL. The speed is likely
+  on par with this extension and handles memory consumption better.
+
+  The one remaining advantage is support for parallel aggregation, which
+  the built-in `COUNT(DISTINCT )` code does not support and it may block
+  parallel aggregation for other aggregates in the same query.
+
+Ultimately, the best thing you can do is do some testing ...
+
+
 Functions
 ---------
 There are two polymorphic aggregate functions, handling fixed length
