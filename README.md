@@ -76,7 +76,7 @@ couple of things:
   If you only care about `COUNT(DISTINCT ...)`, then using the built-in
   stuff from PostgreSQL is an option, and you need to look at the rest
   of this section. If you need the `array_agg_distinct()` part, then
-  using this extension is probably the right thing to do irrespectedly
+  using this extension is probably the right thing to do irrespective
   of the other questions.
 
 * How much data are you dealing with?
