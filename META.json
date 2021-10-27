@@ -2,7 +2,7 @@
    "name": "count_distinct",
    "abstract": "Aggregate for computing number of distinct values using a sorted set.",
    "description": "The regular COUNT(DISTINCT ...) always performs a regular sort internally, which results in bad performance if there's a lot of duplicate values. This extension implements custom count_distinct aggregate function that uses an optimized sorted set to achieve the same purpose. The extension currently supports only data types passed by value",
-   "version": "3.0.1",
+   "version": "3.0.2",
    "maintainer": [
       "Tomas Vondra <tv@fuzzy.cz>",
       "Alexey Bashtanov <bashtanov@imap.cc>"
@@ -17,9 +17,9 @@
    },
    "provides": {
      "count_distinct": {
-       "file": "sql/count_distinct--3.0.1.sql",
+       "file": "sql/count_distinct--3.0.2.sql",
        "docfile" : "README.md",
-       "version": "3.0.1"
+       "version": "3.0.2"
      }
    },
    "resources": {

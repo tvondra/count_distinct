@@ -403,8 +403,13 @@ count_distinct_combine(PG_FUNCTION_ARGS)
 	eset1 = PG_ARGISNULL(0) ? NULL : (element_set_t *) PG_GETARG_POINTER(0);
 	eset2 = PG_ARGISNULL(1) ? NULL : (element_set_t *) PG_GETARG_POINTER(1);
 
-	if (eset2 == NULL)
-		PG_RETURN_POINTER(eset1);
+	if (eset2 == NULL) {
+		/* pass eset1 down the line */
+		if (eset1 == NULL)
+			PG_RETURN_NULL();
+		else
+			PG_RETURN_POINTER(eset1);
+	}
 
 	if (eset1 == NULL)
 	{
