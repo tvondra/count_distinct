@@ -149,4 +149,16 @@ SELECT count_distinct_elements(z) FROM (
                       10
 (1 row)
 
+-- This way a problem with combine function called with both arguments nulls was reproduced.
+SELECT sum(cnt) FROM (
+       SELECT x,
+              count_distinct(NULL::int) cnt
+       FROM test_data_0_1000
+       GROUP BY x
+) _;
+ sum 
+-----
+    
+(1 row)
+
 ROLLBACK;

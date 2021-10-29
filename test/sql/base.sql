@@ -72,4 +72,12 @@ SELECT count_distinct_elements(z) FROM (
     SELECT ARRAY[mod(x,10)::int2, mod(x+1,10)::int2] AS z FROM generate_series(1,1000) s(x)
 ) foo;
 
+-- This way a problem with combine function called with both arguments nulls was reproduced.
+SELECT sum(cnt) FROM (
+       SELECT x,
+              count_distinct(NULL::int) cnt
+       FROM test_data_0_1000
+       GROUP BY x
+) _;
+
 ROLLBACK;

@@ -1,4 +1,4 @@
 # count_distinct aggregate
 comment = 'An alternative to COUNT(DISTINCT ...) aggregate, usable with HashAggregate'
-default_version = '3.0.1'
+default_version = '3.0.2'
 relocatable = true
