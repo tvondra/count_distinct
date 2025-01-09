@@ -1,5 +1,8 @@
 COUNT_DISTINCT aggregate
 ========================
+
+[![make installcheck](https://github.com/tvondra/count_distinct/actions/workflows/ci.yml/badge.svg)](https://github.com/tvondra/count_distinct/actions/workflows/ci.yml)
+
 This extension provides an alternative to COUNT(DISTINCT ...) which for large
 amounts of data often ends in sorting and poor performance.
 
