@@ -33,17 +33,21 @@ Performance
 So, what's wrong with plain `COUNT(DISTINCT ...)`? Let's use this table
 for some tests
 
-    CREATE TABLE test_table (id INT, val INT);
-    
-    INSERT INTO test_table
-         SELECT mod(i, 1000), (1000 * random())::int
-           FROM generate_series(1,10000000) s(i);
-    
-    ANALYZE test_table;
+```sql
+CREATE TABLE test_table (id INT, val INT);
+
+INSERT INTO test_table
+     SELECT mod(i, 1000), (1000 * random())::int
+       FROM generate_series(1,10000000) s(i);
+
+ANALYZE test_table;
+```
     
 Now, let's try this query
 
-    SELECT id, COUNT(DISTINCT val) FROM test_table GROUP BY 1
+```sql
+SELECT id, COUNT(DISTINCT val) FROM test_table GROUP BY 1
+```
     
 which is executed like this
 
@@ -187,8 +191,8 @@ An example of results from one particular machine (CPU Intel i5-2500k,
 
 The scale specifies how large the table is - 100k, 1M or 10M rows. There
 are 16 different queries. The following three columns show timing (in
-miliseconds), median of 6 runs. `native` means `COUNT(DISTINCT ...)`,
-while `serial` and `parallel` means functions from this extention, with
+milliseconds), median of 6 runs. `native` means `COUNT(DISTINCT ...)`,
+while `serial` and `parallel` means functions from this extension, with
 parallel queries disabled and enabled. The last two columns are simply
 timing compared to `native`.
 
